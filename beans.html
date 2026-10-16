@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이번 원두 가이드</title>
+  <meta name="description" content="커피 세션이 이번에 구매한 원두 다섯 가지의 특징과 원두별 추천 드립 레시피.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 8h22l-8 15h-6z' fill='%232a1e17'/%3E%3Ccircle cx='16' cy='13' r='3' fill='%23a3242b'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="beans.html">
+  <main class="page">
+    <header class="page-heading">
+      <h1>이번 원두 가이드</h1>
+      <p class="lead">
+        샹드마르스 로스팅랩(Champ de Mars Coffee Roasting Lab)에서 다섯 가지 원두를 받았습니다.
+        원두마다 맛의 성격과 잘 맞는 물 온도, 분쇄도가 다르니 내리기 전에 한 번 훑어보세요.
+      </p>
+    </header>
+
+    <h2 id="overview">한눈에 비교</h2>
+    <div class="table-scroll">
+      <table id="bean-overview-table">
+        <thead>
+          <tr>
+            <th>원두</th>
+            <th>가공</th>
+            <th>맛의 성격</th>
+            <th>물 온도</th>
+            <th>비율</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="callout callout-warning">
+      <span class="callout-title">컵노트는 참고용입니다</span>
+      <p>
+        아래 컵노트와 맛 그래프는 산지와 가공 방식에서 일반적으로 기대되는 맛을 정리한 것입니다.
+        봉투 라벨에 로스터가 적은 컵노트가 있으면 그것을 우선해 주세요.
+      </p>
+    </div>
+
+    <div class="callout callout-water">
+      <span class="callout-title">가공 방식, 이것만 알면 됩니다</span>
+      <p>
+        <b>내추럴</b>은 커피 열매를 통째로 말린 뒤 씨앗을 꺼내는 방식이라 과일 같은 단맛과 진한 향이 납니다.
+        <b>워시드</b>는 과육을 벗겨 씻은 뒤 말려서 맛이 깔끔합니다.
+        <b>무산소 발효</b>는 산소를 막은 통에서 발효시켜 독특하고 강한 과일 향을 만드는 실험적인 방식입니다.
+      </p>
+    </div>
+
+    <div id="bean-sections"></div>
+  </main>
+
+  <script src="js/beans-data.js"></script>
+  <script src="js/common.js"></script>
+  <script>
+    (function renderBeanGuide() {
+      const TASTE_SCALE_MAXIMUM = 5;
+      const tasteLabels = [
+        { key: "acidity", label: "산미" },
+        { key: "sweetness", label: "단맛" },
+        { key: "body", label: "바디" },
+        { key: "aroma", label: "향" }
+      ];
+
+      const beans = window.CoffeeSession.beans;
+      const describeGrindSetting = window.CoffeeSession.describeGrindSetting;
+
+      function formatSecondsAsClock(totalSeconds) {
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return minutes + ":" + String(seconds).padStart(2, "0");
+      }
+
+      function createElement(tagName, className, text) {
+        const element = document.createElement(tagName);
+        if (className) {
+          element.className = className;
+        }
+        if (text !== undefined) {
+          element.textContent = text;
+        }
+        return element;
+      }
+
+      function describeCharacter(bean) {
+        return bean.flavorNotes.slice(0, 2).join(", ");
+      }
+
+      /* 비교표 */
+      const overviewBody = document.querySelector("#bean-overview-table tbody");
+      beans.forEach(function addOverviewRow(bean) {
+        const row = document.createElement("tr");
+
+        const nameCell = document.createElement("td");
+        const nameLink = createElement("a", "", bean.koreanName);
+        nameLink.href = "#" + bean.id;
+        nameCell.appendChild(nameLink);
+
+        const waterGrams = Math.round(bean.recipe.doseGrams * bean.recipe.ratio);
+        row.append(
+          nameCell,
+          createElement("td", "", bean.process),
+          createElement("td", "", describeCharacter(bean)),
+          createElement("td", "numeric", bean.recipe.temperatureCelsius + "°C"),
+          createElement("td", "numeric", "1:" + bean.recipe.ratio + " (" + waterGrams + "g)")
+        );
+        overviewBody.appendChild(row);
+      });
+
+      /* 원두별 상세 */
+      const sectionsContainer = document.getElementById("bean-sections");
+      beans.forEach(function addBeanSection(bean) {
+        const section = createElement("section", "bean-section");
+        section.id = bean.id;
+
+        const header = createElement("div", "bean-header");
+        const colorBar = createElement("span", "bean-color-bar");
+        colorBar.style.background = bean.labelBackground;
+        const headerText = document.createElement("div");
+        headerText.append(
+          createElement("h2", "", bean.koreanName),
+          createElement("p", "bean-english-name", bean.englishName + ", " + bean.nickname)
+        );
+        header.append(colorBar, headerText);
+
+        const facts = createElement("dl", "bean-facts");
+        [
+          ["산지", bean.origin],
+          ["품종", bean.variety],
+          ["가공", bean.process],
+          ["재배 고도", bean.altitude]
+        ].forEach(function addFact(fact) {
+          const factWrapper = document.createElement("div");
+          factWrapper.append(createElement("dt", "", fact[0]), createElement("dd", "", fact[1]));
+          facts.appendChild(factWrapper);
+        });
+
+        const description = createElement("p", "", bean.description);
+
+        const notesList = createElement("ul", "flavor-notes");
+        notesList.setAttribute("aria-label", "참고 컵노트");
+        bean.flavorNotes.forEach(function addNote(note) {
+          notesList.appendChild(createElement("li", "", note));
+        });
+
+        const tasteBars = createElement("div", "taste-bars");
+        tasteLabels.forEach(function addTasteBar(taste) {
+          const score = bean.tasteProfile[taste.key];
+          const bar = createElement("div", "taste-bar");
+          const track = createElement("div", "taste-bar-track");
+          track.setAttribute("role", "img");
+          track.setAttribute("aria-label", taste.label + " " + score + " / " + TASTE_SCALE_MAXIMUM);
+          const fill = createElement("div", "taste-bar-fill");
+          fill.style.width = (score / TASTE_SCALE_MAXIMUM) * 100 + "%";
+          fill.style.background = bean.accentColor;
+          track.appendChild(fill);
+          bar.append(createElement("span", "", taste.label), track);
+          tasteBars.appendChild(bar);
+        });
+
+        const recipe = bean.recipe;
+        const waterGrams = Math.round(recipe.doseGrams * recipe.ratio);
+        const recipeBox = createElement("div", "recipe-box");
+        recipeBox.appendChild(createElement("h3", "", "추천 레시피"));
+
+        const summary = createElement("p", "recipe-summary");
+        summary.innerHTML =
+          "<span>원두 <b>" + recipe.doseGrams + "g</b></span>" +
+          "<span>물 <b>" + waterGrams + "g</b></span>" +
+          "<span>온도 <b>" + recipe.temperatureCelsius + "°C</b></span>" +
+          "<span>총 시간 <b>" + recipe.targetTimeText + "</b></span>";
+        recipeBox.appendChild(summary);
+        recipeBox.appendChild(
+          createElement("p", "small-print", "분쇄도: " + describeGrindSetting(recipe.grindSetting) + ", 시뮬레이터 기준 " + recipe.grindSetting + "단계")
+        );
+
+        const schedule = createElement("ol", "recipe-schedule");
+        recipe.schedule.forEach(function addScheduleStep(step) {
+          schedule.appendChild(
+            createElement("li", "", formatSecondsAsClock(step.atSecond) + "  " + step.label + ", 저울 " + step.cumulativeGrams + "g까지")
+          );
+        });
+        recipeBox.appendChild(schedule);
+
+        const actions = createElement("div", "recipe-actions");
+        const simulatorLink = createElement("a", "button button-secondary", "이 레시피로 시뮬레이터 열기");
+        simulatorLink.href = "simulator.html?bean=" + bean.id;
+        actions.appendChild(simulatorLink);
+        recipeBox.appendChild(actions);
+
+        const tip = createElement("div", "callout");
+        tip.append(createElement("span", "callout-title", "이렇게 내려 보세요"), createElement("p", "", bean.brewingTip));
+
+        section.append(header, facts, description, notesList, tasteBars, recipeBox, tip);
+        sectionsContainer.appendChild(section);
+      });
+
+      /* 원두를 동적으로 그린 뒤에 주소의 #위치로 다시 이동합니다 */
+      if (window.location.hash) {
+        const target = document.querySelector(window.location.hash);
+        if (target) {
+          target.scrollIntoView();
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

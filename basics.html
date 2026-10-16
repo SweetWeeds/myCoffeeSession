@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>드립커피 입문</title>
+  <meta name="description" content="드립커피를 처음 내리는 분을 위한 도구, 핵심 변수, 기본 레시피, 맛 문제 해결 안내.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 8h22l-8 15h-6z' fill='%232a1e17'/%3E%3Ccircle cx='16' cy='13' r='3' fill='%23a3242b'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body data-page="basics.html">
+  <main class="page">
+    <header class="page-heading">
+      <h1>드립커피 입문</h1>
+      <p class="lead">
+        드립커피는 갈아 둔 원두 위에 뜨거운 물을 천천히 부어 종이 필터로 걸러 내리는 방식입니다.
+        도구는 단순하지만, 물을 붓는 사람이 맛을 직접 조절할 수 있다는 점이 가장 큰 매력입니다.
+      </p>
+    </header>
+
+    <section class="learning-goals">
+      <h2>이 페이지를 읽고 나면</h2>
+      <ul>
+        <li>드립에 필요한 도구가 무엇이고 어디까지 꼭 필요한지 압니다.</li>
+        <li>맛을 바꾸는 네 가지 변수(비율, 분쇄도, 물 온도, 시간)를 이해합니다.</li>
+        <li>기본 레시피로 첫 잔을 내리고, 맛이 이상할 때 무엇을 바꿀지 판단합니다.</li>
+      </ul>
+    </section>
+
+    <h2 id="tools">준비물</h2>
+    <p>
+      동호회 공용 도구로 아래 장비를 갖춰 두었습니다. 집에서 시작한다면 드리퍼, 필터, 저울부터 마련하고
+      그라인더는 원두를 갈아서 사는 것으로 잠시 대신해도 됩니다.
+    </p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>도구</th>
+            <th>역할</th>
+            <th>꼭 필요한가</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>드리퍼</strong> <span class="term-english">(Dripper)</span></td>
+            <td>필터와 원두를 담는 깔때기. 구멍이 하나인 원뿔형(하리오 V60)은 물이 빨리 빠지고, 구멍이 여럿인 사다리꼴(칼리타)은 천천히 빠집니다.</td>
+            <td>필수</td>
+          </tr>
+          <tr>
+            <td><strong>종이 필터</strong></td>
+            <td>가루와 기름을 걸러 깔끔한 맛을 만듭니다. 드리퍼 모양에 맞는 크기를 씁니다.</td>
+            <td>필수</td>
+          </tr>
+          <tr>
+            <td><strong>저울</strong></td>
+            <td>원두와 물의 양을 0.1g 단위로 잽니다. 타이머가 함께 있는 커피 저울이 편합니다.</td>
+            <td>필수</td>
+          </tr>
+          <tr>
+            <td><strong>그라인더</strong></td>
+            <td>원두를 일정한 크기로 갑니다. 날로 쪼개는 방식보다 맷돌처럼 가는 버(Burr) 방식이 고르게 갈립니다.</td>
+            <td>강력 추천</td>
+          </tr>
+          <tr>
+            <td><strong>드립 주전자</strong></td>
+            <td>목이 가늘고 긴 주전자로, 물줄기의 굵기와 위치를 조절하기 쉽습니다.</td>
+            <td>추천</td>
+          </tr>
+          <tr>
+            <td><strong>서버, 온도계</strong></td>
+            <td>서버는 커피를 받는 유리 용기, 온도계는 물 온도를 확인할 때 씁니다. 온도 조절 주전자가 있으면 온도계는 없어도 됩니다.</td>
+            <td>있으면 좋음</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="variables">맛을 바꾸는 네 가지 변수</h2>
+    <p>
+      커피 가루에 물이 닿으면 맛 성분이 녹아 나옵니다. 이것을 <strong class="term">추출</strong><span class="term-english">(Extraction)</span>이라고 합니다.
+      녹아 나오는 순서는 대체로 <b>신맛, 단맛, 쓴맛</b> 순입니다. 그래서 너무 덜 우리면 시큼하고 밍밍하며,
+      너무 오래 우리면 쓰고 떫어집니다. 아래 네 가지가 "얼마나 우릴지"를 결정합니다.
+    </p>
+
+    <h3>비율 <span class="term-english">(Brew Ratio)</span></h3>
+    <p>
+      원두 1g당 물을 몇 g 쓰는지를 말합니다. 입문용으로는 <b>1:15–1:16</b>(원두 15g에 물 225–240g)을 권합니다.
+      숫자가 작을수록 진하고, 클수록 연합니다. 맛이 너무 진하거나 연할 때 가장 먼저 바꿔 볼 변수입니다.
+    </p>
+
+    <div class="ratio-calculator" id="ratio-calculator">
+      <p class="ratio-calculator-title">비율 계산기</p>
+      <div class="field">
+        <label class="field-label" for="calculator-dose">원두 양 <span class="field-value" id="calculator-dose-value">15g</span></label>
+        <input type="range" id="calculator-dose" min="10" max="30" step="1" value="15">
+      </div>
+      <div class="field">
+        <label class="field-label" for="calculator-ratio">비율 <span class="field-value" id="calculator-ratio-value">1:16</span></label>
+        <input type="range" id="calculator-ratio" min="12" max="18" step="0.5" value="16">
+      </div>
+      <p class="ratio-calculator-result" id="calculator-result" aria-live="polite"></p>
+      <p class="small-print">완성되는 커피 양은 원두가 물을 자기 무게의 약 2배만큼 머금는 것을 빼고 계산했습니다.</p>
+    </div>
+
+    <h3>분쇄도 <span class="term-english">(Grind Size)</span></h3>
+    <p>
+      가늘게 갈수록 물에 닿는 면적이 넓어지고 물도 천천히 빠져서 더 많이 우러납니다.
+      드립은 <b>굵은 설탕</b> 정도가 기준입니다. 시큼하면 한 단계 가늘게, 쓰면 한 단계 굵게 바꿔 보세요.
+    </p>
+
+    <h3>물 온도</h3>
+    <p>
+      뜨거울수록 성분이 잘 녹아 나옵니다. 기준은 <b>90–94°C</b>, 끓은 물을 1–2분 식히면 이 정도가 됩니다.
+      밝게 볶은 원두는 높게, 진하게 볶았거나 향이 화려한 원두는 조금 낮게 씁니다.
+    </p>
+
+    <h3>추출 시간</h3>
+    <p>
+      첫 물을 붓는 순간부터 마지막 물이 다 빠질 때까지의 시간입니다. 15g 기준 <b>2분 30초–3분</b>이 적당합니다.
+      시간은 분쇄도의 결과이기도 해서, 시간이 너무 길면 대개 분쇄가 너무 가는 것입니다.
+    </p>
+
+    <div class="callout callout-water">
+      <span class="callout-title">한 번에 하나씩만 바꾸기</span>
+      <p>맛을 고칠 때 두 가지 이상을 동시에 바꾸면 무엇 때문에 달라졌는지 알 수 없습니다. 분쇄도부터 한 단계씩 바꿔 보세요.</p>
+    </div>
+
+    <h2 id="recipe">기본 레시피로 첫 잔 내리기</h2>
+    <p>원두 15g, 물 240g(1:16), 물 온도 92°C 기준입니다. 저울 위에 드리퍼와 서버를 올리고 시작합니다.</p>
+
+    <ol class="step-list">
+      <li>
+        <strong>물 끓이기</strong>
+        넉넉히 400g 정도 끓여서 92°C 전후로 식힙니다. 남는 물은 필터를 헹구고 잔을 데우는 데 씁니다.
+      </li>
+      <li>
+        <strong>필터 헹구기</strong>
+        필터를 드리퍼에 끼우고 뜨거운 물을 한 바퀴 둘러 종이 냄새를 빼고 드리퍼를 데웁니다. 서버에 고인 물은 버립니다.
+      </li>
+      <li>
+        <strong>원두 갈기</strong>
+        15g을 굵은 설탕 정도로 갈아 필터에 담고, 드리퍼를 살살 흔들어 표면을 평평하게 만든 뒤 저울을 0으로 맞춥니다.
+      </li>
+      <li>
+        <strong>뜸 들이기 <span class="step-time">0:00–0:40</span></strong>
+        물 40g을 가루 전체가 젖도록 부은 뒤 기다립니다. 가루가 부풀며 가스가 빠져야 다음 물이 고르게 스며듭니다.
+      </li>
+      <li>
+        <strong>나눠 붓기 <span class="step-time">0:40–1:50</span></strong>
+        가운데에서 바깥쪽으로 작은 원을 그리며 120g, 180g, 240g까지 세 번에 나눠 붓습니다. 필터 종이에 직접 물을 붓지 않습니다.
+      </li>
+      <li>
+        <strong>마무리 <span class="step-time">2:30–3:00</span></strong>
+        물이 다 빠지면 드리퍼를 내리고 서버를 가볍게 돌려 섞은 뒤 잔에 따릅니다.
+      </li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout-title">직접 해 보기</span>
+      <p>이 순서는 <a href="simulator.html">3D 시뮬레이터</a>에서 그대로 따라 해 볼 수 있습니다. 원두를 직접 갈고, 드리퍼에 담고, 원을 그리며 물을 부으면 점수와 한줄평을 받습니다.</p>
+    </div>
+
+    <h2 id="troubleshooting">맛이 이상할 때</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>이런 맛이면</th>
+            <th>원인</th>
+            <th>이렇게 바꿔 보세요</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>시큼하고 짭짤하며 금방 사라짐</td>
+            <td>덜 우러남 <span class="term-english">(과소 추출)</span></td>
+            <td>분쇄를 한 단계 가늘게, 또는 물 온도를 2°C 올리기</td>
+          </tr>
+          <tr>
+            <td>쓰고 떫고 입안이 마름</td>
+            <td>너무 우러남 <span class="term-english">(과다 추출)</span></td>
+            <td>분쇄를 한 단계 굵게, 또는 물 온도를 2°C 내리기</td>
+          </tr>
+          <tr>
+            <td>맛은 괜찮은데 물 같음</td>
+            <td>농도가 낮음</td>
+            <td>비율을 1:16에서 1:15로 (원두를 늘리거나 물을 줄이기)</td>
+          </tr>
+          <tr>
+            <td>맛은 괜찮은데 너무 진함</td>
+            <td>농도가 높음</td>
+            <td>비율을 1:16에서 1:17로, 또는 완성 후 뜨거운 물을 조금 더하기</td>
+          </tr>
+          <tr>
+            <td>물이 4분 넘게 안 빠짐</td>
+            <td>분쇄가 너무 가늘거나 고운 가루가 많음</td>
+            <td>분쇄를 두 단계 굵게, 붓는 물줄기를 약하게</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="summary">핵심 정리</h2>
+    <ul>
+      <li>원두 15g, 물 240g, 92°C, 2분 30초–3분이 출발점입니다.</li>
+      <li>신맛이 튀면 더 우리고(가늘게, 뜨겁게), 쓰면 덜 우립니다(굵게, 덜 뜨겁게).</li>
+      <li>진하기는 비율로 조절하고, 한 번에 한 변수만 바꿉니다.</li>
+    </ul>
+
+    <h2 id="quiz">확인 문제</h2>
+
+    <div class="quiz">
+      <p class="quiz-question">커피가 시큼하고 맛이 금방 사라집니다. 가장 먼저 해 볼 것은?</p>
+      <div class="quiz-options">
+        <button type="button">분쇄를 한 단계 굵게 한다</button>
+        <button type="button" data-correct="true">분쇄를 한 단계 가늘게 한다</button>
+        <button type="button">물 온도를 낮춘다</button>
+      </div>
+      <p class="quiz-explanation" hidden>시큼함은 덜 우러났다는 신호입니다. 가늘게 갈면 물에 닿는 면적이 넓어지고 물이 천천히 빠져서 더 많이 우러납니다.</p>
+    </div>
+
+    <div class="quiz">
+      <p class="quiz-question">원두 18g으로 1:16 비율의 커피를 내리려면 물은 몇 g이 필요할까요?</p>
+      <div class="quiz-options">
+        <button type="button">240g</button>
+        <button type="button">270g</button>
+        <button type="button" data-correct="true">288g</button>
+      </div>
+      <p class="quiz-explanation" hidden>18 × 16 = 288g입니다. 이 중 원두가 약 36g을 머금기 때문에 실제로 잔에 담기는 커피는 250g 정도입니다.</p>
+    </div>
+
+    <div class="quiz">
+      <p class="quiz-question">뜸 들이기를 하는 가장 큰 이유는?</p>
+      <div class="quiz-options">
+        <button type="button">커피를 빨리 식히려고</button>
+        <button type="button" data-correct="true">원두 속 가스를 빼서 물이 고르게 스며들게 하려고</button>
+        <button type="button">필터 종이 냄새를 빼려고</button>
+      </div>
+      <p class="quiz-explanation" hidden>갓 볶은 원두에는 이산화탄소가 많아 물을 밀어냅니다. 30–45초 정도 기다리면 가스가 빠져 이후에 붓는 물이 가루 전체에 고르게 닿습니다.</p>
+    </div>
+  </main>
+
+  <script src="js/common.js"></script>
+  <script>
+    (function setUpRatioCalculator() {
+      /* 원두는 자기 무게의 약 2배만큼 물을 머금고 필터에 남습니다 */
+      const WATER_RETAINED_PER_GRAM_OF_COFFEE = 2;
+
+      const doseInput = document.getElementById("calculator-dose");
+      const ratioInput = document.getElementById("calculator-ratio");
+      const doseValue = document.getElementById("calculator-dose-value");
+      const ratioValue = document.getElementById("calculator-ratio-value");
+      const resultElement = document.getElementById("calculator-result");
+
+      function updateCalculator() {
+        const doseGrams = Number(doseInput.value);
+        const ratio = Number(ratioInput.value);
+        const waterGrams = Math.round(doseGrams * ratio);
+        const beverageGrams = Math.round(waterGrams - doseGrams * WATER_RETAINED_PER_GRAM_OF_COFFEE);
+
+        doseValue.textContent = doseGrams + "g";
+        ratioValue.textContent = "1:" + ratio;
+        resultElement.textContent = "물 " + waterGrams + "g 부으면 커피 약 " + beverageGrams + "g";
+      }
+
+      doseInput.addEventListener("input", updateCalculator);
+      ratioInput.addEventListener("input", updateCalculator);
+      updateCalculator();
+    })();
+  </script>
+</body>
+</html>

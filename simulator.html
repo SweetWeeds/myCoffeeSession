@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>드립 시뮬레이터</title>
+  <meta name="description" content="원두를 직접 갈고, 드리퍼에 담고, 원을 그리며 물을 부어 보는 3D 드립커피 시뮬레이터. 내린 커피에 점수와 한줄평을 줍니다.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M5 8h22l-8 15h-6z' fill='%232a1e17'/%3E%3Ccircle cx='16' cy='13' r='3' fill='%23a3242b'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body data-page="simulator.html">
+  <main class="page page-wide">
+    <header class="page-heading">
+      <h1>드립 시뮬레이터</h1>
+      <p class="lead">
+        작업대 위의 그라인더, 가루 통, 주전자로 직접 한 잔을 내려 보세요. 순서는 자유입니다.
+        원두가 부딪히며 갈리고, 물이 퍼지고 고이고 스며드는 과정을 간단한 물리 계산으로 흉내 내며,
+        다 내리면 점수와 한줄평을 알려 드립니다.
+      </p>
+    </header>
+
+    <div class="brew-checklist" id="brew-checklist" aria-label="권장 순서 (지키지 않아도 됩니다)">
+      <span class="brew-checklist-title">권장 순서</span>
+      <span class="check-item" data-check="grind">원두 갈기</span>
+      <span class="check-item" data-check="grounds">가루 담기</span>
+      <span class="check-item" data-check="level">평평하게 흔들기</span>
+      <span class="check-item" data-check="bloom">뜸 들이기</span>
+      <span class="check-item" data-check="pours">나눠 붓기</span>
+    </div>
+
+    <div class="simulator">
+      <section class="brew-stage" aria-label="3D 드립 작업대">
+        <div class="three-viewport" id="three-viewport">
+          <div class="stage-overlay">
+            <p class="stage-instruction" id="stage-instruction" aria-live="polite"></p>
+          </div>
+          <div class="segmented tool-selector" id="tool-selector" role="group" aria-label="도구">
+            <button type="button" data-tool="grind" aria-pressed="true">그라인더 <kbd>1</kbd></button>
+            <button type="button" data-tool="grounds" aria-pressed="false">가루 통 <kbd>2</kbd></button>
+            <button type="button" data-tool="shake" aria-pressed="false">흔들기 <kbd>3</kbd></button>
+            <button type="button" data-tool="water" aria-pressed="false">주전자 <kbd>4</kbd></button>
+            <button type="button" data-tool="camera" aria-pressed="false">시점 <kbd>5</kbd></button>
+          </div>
+          <div class="segmented view-selector" id="view-selector" role="group" aria-label="보는 각도">
+            <button type="button" data-view="angled">비스듬히</button>
+            <button type="button" data-view="top">위에서</button>
+            <button type="button" data-view="side">옆에서</button>
+          </div>
+          <p class="webgl-fallback" id="webgl-fallback" hidden>
+            이 브라우저에서는 3D 화면을 그릴 수 없습니다. 최신 크롬, 엣지, 사파리에서 열어 주세요.
+          </p>
+        </div>
+
+        <div class="scale-panel">
+          <div>
+            <div class="scale-readout-label">시간</div>
+            <div class="scale-readout-value" id="scale-time">0:00</div>
+          </div>
+          <div>
+            <div class="scale-readout-label">부은 물</div>
+            <div class="scale-readout-value"><span id="scale-weight">0.0</span><small>g</small></div>
+          </div>
+          <div>
+            <div class="scale-readout-label">서버의 커피</div>
+            <div class="scale-readout-value"><span id="scale-beverage">0</span><small>g</small></div>
+          </div>
+          <div class="scale-target" id="scale-target"></div>
+        </div>
+
+        <svg class="pour-timeline" id="pour-timeline" viewBox="0 0 400 46" preserveAspectRatio="none" role="img" aria-label="레시피 대비 붓기 진행 그래프"></svg>
+
+        <div class="pour-controls">
+          <button type="button" class="button" id="finish-button" disabled>추출 끝내기</button>
+          <button type="button" class="button button-secondary" id="automatic-grind-button">자동으로 갈기</button>
+          <button type="button" class="button button-secondary" id="automatic-load-button">자동으로 담고 평평하게</button>
+          <button type="button" class="button button-secondary" id="automatic-pour-button">레시피대로 자동 붓기</button>
+          <button type="button" class="button button-secondary" id="reset-button">처음부터</button>
+          <p class="keyboard-hint">
+            도구는 아래 단추나 숫자 키 1–5로 바꿉니다. 어느 도구에서든 오른쪽 버튼으로 끌면 시점이 돌고, 휠로 확대합니다.
+            주전자를 고른 뒤 스페이스 바를 누르고 있어도 물이 나옵니다.
+          </p>
+        </div>
+      </section>
+
+      <div>
+        <section class="control-panel result-panel" id="result-panel" aria-labelledby="result-title" hidden>
+          <h2 id="result-title">이번 한 잔</h2>
+          <p class="result-score"><span id="result-score">0</span><small>점</small></p>
+          <p class="result-review" id="result-review"></p>
+          <ul class="score-breakdown" id="score-breakdown"></ul>
+          <dl class="result-numbers">
+            <div><dt>추출 시간</dt><dd id="result-time"></dd></div>
+            <div><dt>커피 양</dt><dd id="result-beverage"></dd></div>
+            <div><dt>추출 수율</dt><dd id="result-extraction"></dd></div>
+            <div><dt>농도</dt><dd id="result-strength"></dd></div>
+            <div><dt>추출 균일도</dt><dd id="result-uniformity"></dd></div>
+            <div><dt>원두를 안 거친 물</dt><dd id="result-bypass"></dd></div>
+          </dl>
+          <p class="result-verdict" id="result-verdict"></p>
+          <ul class="result-advice" id="result-advice"></ul>
+          <div class="form-actions">
+            <button type="button" class="button button-secondary" id="heatmap-button" aria-pressed="false">원두 층 추출 지도 보기</button>
+          </div>
+          <p class="small-print" id="heatmap-legend" hidden>
+            파란색은 덜 우러난 곳, 초록색은 알맞게 우러난 곳, 붉은색은 너무 우러난 곳입니다.
+          </p>
+          <svg class="brew-chart" id="brew-chart" viewBox="0 0 360 250" role="img" aria-label="추출 수율과 농도로 본 맛 지도"></svg>
+          <div class="form-actions">
+            <a class="button" id="send-to-tasting" href="tasting.html">이 한 잔 맛 기록하기</a>
+            <button type="button" class="button button-secondary" id="brew-again-button">다시 내리기</button>
+          </div>
+        </section>
+
+        <section class="control-panel" aria-labelledby="settings-title">
+          <h2 id="settings-title">레시피 설정</h2>
+          <div class="field">
+            <label class="field-label" for="bean-select">원두</label>
+            <select id="bean-select"></select>
+            <span class="field-hint" id="bean-hint"></span>
+          </div>
+
+          <div class="control-grid">
+            <div class="field">
+              <label class="field-label" for="dose-input">원두 양 <span class="field-value" id="dose-value"></span></label>
+              <input type="range" id="dose-input" min="10" max="25" step="1">
+            </div>
+            <div class="field">
+              <label class="field-label" for="ratio-input">비율 <span class="field-value" id="ratio-value"></span></label>
+              <input type="range" id="ratio-input" min="12" max="18" step="0.5">
+            </div>
+            <div class="field">
+              <label class="field-label" for="grind-input">분쇄도 <span class="field-value" id="grind-value"></span></label>
+              <input type="range" id="grind-input" min="1" max="10" step="1">
+              <span class="field-hint" id="grind-hint"></span>
+            </div>
+            <div class="field">
+              <label class="field-label" for="temperature-input">물 온도 <span class="field-value" id="temperature-value"></span></label>
+              <input type="range" id="temperature-input" min="80" max="100" step="1">
+            </div>
+          </div>
+
+          <div class="control-grid">
+            <div class="field">
+              <span class="field-label">물줄기</span>
+              <div class="segmented" id="pour-rate-selector" role="group" aria-label="물줄기 굵기">
+                <button type="button" data-rate="gentle" aria-pressed="false">가늘게</button>
+                <button type="button" data-rate="normal" aria-pressed="true">보통</button>
+                <button type="button" data-rate="strong" aria-pressed="false">굵게</button>
+              </div>
+            </div>
+            <div class="field">
+              <span class="field-label">재생 속도</span>
+              <div class="segmented" id="speed-selector" role="group" aria-label="재생 속도">
+                <button type="button" data-speed="1" aria-pressed="false">1배</button>
+                <button type="button" data-speed="2" aria-pressed="true">2배</button>
+                <button type="button" data-speed="4" aria-pressed="false">4배</button>
+              </div>
+            </div>
+          </div>
+          <p class="small-print">원두를 갈기 시작하거나 물을 부으면 원두, 양, 분쇄도, 온도 설정이 잠깁니다. 바꾸려면 처음부터를 누르세요.</p>
+        </section>
+
+        <section class="control-panel" aria-labelledby="history-title">
+          <h2 id="history-title">지난 시도</h2>
+          <ul class="history-list" id="history-list"></ul>
+          <p class="small-print" id="history-empty">아직 내린 커피가 없습니다. 왼쪽에서 첫 잔을 내려 보세요.</p>
+        </section>
+      </div>
+    </div>
+
+    <h2 id="how-it-works">시뮬레이터가 계산하는 것</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>도구</th>
+            <th>하는 일</th>
+            <th>맛에 미치는 영향</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>그라인더</td>
+            <td>누른 채 시계 방향으로 원을 그립니다. 원두 알갱이가 서로 부딪히며 가운데 날로 빨려 들어갑니다.</td>
+            <td>너무 빨리 돌리면 고운 가루(미분)가 늘어 물이 늦게 빠지고 떫은맛이 납니다.</td>
+          </tr>
+          <tr>
+            <td>가루 통</td>
+            <td>통을 드리퍼 위로 끌고 가 누르고 있으면 가루가 쏟아집니다.</td>
+            <td>한곳에 쏟으면 원두 층이 울퉁불퉁해져 물이 낮은 곳으로 몰립니다.</td>
+          </tr>
+          <tr>
+            <td>흔들기</td>
+            <td>누른 채 좌우로 빠르게 끕니다.</td>
+            <td>원두 층이 평평해져 물이 고르게 스며듭니다.</td>
+          </tr>
+          <tr>
+            <td>주전자</td>
+            <td>누른 채 원을 그리며 붓습니다. 첫 물은 원두의 2–3배만 붓고 30–45초 기다립니다.</td>
+            <td>필터 종이에 직접 부은 물은 원두를 거치지 않아 커피를 묽게 하고, 종이가 젖어 번지는 모습으로 보입니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="how-to-read">점수와 결과 읽는 법</h2>
+    <p>
+      점수는 100점 만점으로 추출 수율 35점, 농도 20점, 추출 균일도 20점, 그리고 뜸 들이기, 필터 벽 피하기,
+      추출 시간, 고른 분쇄를 합한 기술 점수 25점으로 이루어집니다. 한줄평은 가장 많이 깎인 항목을 짚어 줍니다.
+    </p>
+    <p>
+      <strong class="term">추출 수율</strong><span class="term-english">(Extraction Yield)</span>은 원두 무게 중 몇 %가 물에 녹아 나왔는지를 뜻합니다.
+      18–22%면 신맛, 단맛, 쓴맛이 고르게 우러난 상태입니다. <strong class="term">농도</strong><span class="term-english">(TDS)</span>는
+      완성된 커피의 진하기로, 이 시뮬레이터는 1.20–1.55%를 적당한 범위로 봅니다. <strong class="term">추출 균일도</strong>는
+      원두 층의 모든 부분이 얼마나 비슷하게 우러났는지를 보여 줍니다.
+    </p>
+    <div class="callout callout-warning">
+      <span class="callout-title">근사 모델입니다</span>
+      <p>
+        실제 추출은 원두의 로스팅 정도, 그라인더, 드리퍼 모양에 따라 달라집니다. 시뮬레이터의 숫자는 경향을 익히는 용도로만 쓰고,
+        최종 판단은 실제로 마셔 본 맛으로 해 주세요.
+      </p>
+    </div>
+  </main>
+
+  <script src="js/beans-data.js"></script>
+  <script src="js/fluid-brew-model.js"></script>
+  <script src="js/paper-wetting-model.js"></script>
+  <script src="js/grinder-physics.js"></script>
+  <script src="js/common.js"></script>
+  <script type="module" src="js/simulator.js"></script>
+</body>
+</html>

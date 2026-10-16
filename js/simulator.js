@@ -8,6 +8,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 const CoffeeSession = window.CoffeeSession;
 const FluidBrewModel = CoffeeSession.FluidBrewModel;
@@ -88,7 +89,8 @@ const KETTLE_PARKED_BODY = new THREE.Vector3(10, TABLE_HEIGHT + 1.7, 5);
 const KETTLE_TILT_SECONDS = 0.35;
 const KETTLE_FLOW_START_TILT = 0.45;
 const KETTLE_MAXIMUM_TILT_RADIANS = { gentle: 0.3, normal: 0.4, strong: 0.52 };
-const SPOUT_OUTLET_RADIUS = 0.13;
+/* 드립 주전자 주둥이 구멍 반지름(지름 약 4.4mm). 물이 나오는 속도와 처음 물줄기 굵기를 정합니다 */
+const SPOUT_OUTLET_RADIUS = 0.22;
 const KETTLE_JET_THRESHOLD_GRAMS_PER_SECOND = 0.6;
 const KETTLE_STREAM_MAXIMUM_PARTICLES = 900;
 const BUBBLE_COUNT = 320;
@@ -102,9 +104,13 @@ const DRIP_JET_THRESHOLD_GRAMS_PER_SECOND = 1.5;
 const DRIP_STREAM_MAXIMUM_PARTICLES = 500;
 
 /* 물줄기 그리기: 실제 굵기(1mm 안팎)로는 화면에서 잘 안 보여 조금 굵게 그립니다 */
-const STREAM_VISUAL_SCALE = 1.4;
-const STREAM_TUBE_MAXIMUM_POINTS = 80;
-const STREAM_TUBE_SIDES = 8;
+const STREAM_VISUAL_SCALE = 1.25;
+const STREAM_TUBE_MAXIMUM_POINTS = 90;
+const STREAM_TUBE_SUBDIVISIONS = 5;
+const STREAM_TUBE_SIDES = 12;
+const RIPPLE_COUNT = 24;
+const RIPPLE_SPAWN_INTERVAL_SECONDS = 0.05;
+const RIPPLE_LIFETIME_SECONDS = 0.7;
 const SPLASH_PARTICLE_COUNT = 240;
 
 /* 필터 종이 격자 */
@@ -475,6 +481,9 @@ camera.lookAt(GRINDER_FOCUS);
 let orbitControls = null;
 if (renderer) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  /* 투명한 물이 주변을 비추고 굴절해 보이도록 방 안 조명을 흉내 낸 환경 빛을 씁니다 */
+  const environmentGenerator = new THREE.PMREMGenerator(renderer);
+  scene.environment = environmentGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
   viewport.prepend(renderer.domElement);
   orbitControls = new OrbitControls(camera, renderer.domElement);
   orbitControls.target.copy(GRINDER_FOCUS);
@@ -756,39 +765,42 @@ kettlePivot.position.copy(KETTLE_PARKED_BODY);
 
 /* ---------- 물줄기와 물방울 그리기 ---------- */
 
-const waterLiquidMaterial = new THREE.MeshStandardMaterial({
-  color: 0xbfe3f5,
-  transparent: true,
-  opacity: 0.82,
-  roughness: 0.05,
-  metalness: 0.1
+/* 물은 빛을 굴절시키는 투명한 액체로, 커피는 갈색이 비치는 액체로 그립니다 */
+const waterLiquidMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0xe4f3ff,
+  transmission: 0.95,
+  thickness: 0.25,
+  roughness: 0.04,
+  ior: 1.33,
+  specularIntensity: 1,
+  attenuationColor: new THREE.Color(0xbfe3f5),
+  attenuationDistance: 2
 });
-const coffeeLiquidMaterial = new THREE.MeshStandardMaterial({ color: 0x5a2f16, transparent: true, opacity: 0.92, roughness: 0.1 });
+const coffeeLiquidMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0x7a4321,
+  transmission: 0.5,
+  thickness: 0.3,
+  roughness: 0.08,
+  ior: 1.34,
+  attenuationColor: new THREE.Color(0x3a1a08),
+  attenuationDistance: 0.4
+});
 
-/* 이어진 물줄기는 입자들을 잇는 관(튜브)으로, 끊어진 물방울은 작은 공으로 그립니다 */
+/* 이어진 물줄기를 관 모양으로 그립니다. 입자 사이를 매끈하게 나눠 그리면서
+   표면 출렁임(레일리-플라토 불안정) 때문에 잘록해지고 불룩해지는 모양을 반지름에 반영합니다 */
 function createStreamRenderer(material, maximumParticles) {
-  const ringVertexCount = STREAM_TUBE_SIDES;
-  const tubePositions = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * ringVertexCount * 3);
-  const tubeIndexes = [];
-  for (let pointIndex = 0; pointIndex < STREAM_TUBE_MAXIMUM_POINTS - 1; pointIndex += 1) {
-    for (let sideIndex = 0; sideIndex < ringVertexCount; sideIndex += 1) {
-      const nextSide = (sideIndex + 1) % ringVertexCount;
-      const current = pointIndex * ringVertexCount + sideIndex;
-      const currentNext = pointIndex * ringVertexCount + nextSide;
-      const below = (pointIndex + 1) * ringVertexCount + sideIndex;
-      const belowNext = (pointIndex + 1) * ringVertexCount + nextSide;
-      tubeIndexes.push(current, below, currentNext, currentNext, below, belowNext);
-    }
-  }
+  const maximumRings = STREAM_TUBE_MAXIMUM_POINTS * STREAM_TUBE_SUBDIVISIONS + 2;
+  const tubePositions = new Float32Array(maximumRings * STREAM_TUBE_SIDES * 3);
+  const tubeIndexes = new Uint32Array(maximumRings * STREAM_TUBE_SIDES * 6);
   const tubeGeometry = new THREE.BufferGeometry();
   tubeGeometry.setAttribute("position", new THREE.BufferAttribute(tubePositions, 3));
-  tubeGeometry.setIndex(tubeIndexes);
+  tubeGeometry.setIndex(new THREE.BufferAttribute(tubeIndexes, 1));
   tubeGeometry.setDrawRange(0, 0);
   const tubeMesh = new THREE.Mesh(tubeGeometry, material);
   tubeMesh.frustumCulled = false;
   scene.add(tubeMesh);
 
-  const dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), material, maximumParticles + 1);
+  const dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 14, 10), material, maximumParticles + 1);
   dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   dropMesh.frustumCulled = false;
   dropMesh.count = 0;
@@ -796,101 +808,223 @@ function createStreamRenderer(material, maximumParticles) {
 
   return {
     tubeGeometry: tubeGeometry,
+    tubePositions: tubePositions,
+    tubeIndexes: tubeIndexes,
+    maximumRings: maximumRings,
     dropMesh: dropMesh,
-    intactIndexes: new Int32Array(STREAM_TUBE_MAXIMUM_POINTS),
+    runIndexes: new Int32Array(STREAM_TUBE_MAXIMUM_POINTS + 1),
     isInTube: new Uint8Array(maximumParticles)
   };
 }
 
-const streamPoint = new THREE.Vector3();
+const streamRingCenter = new THREE.Vector3();
 const streamTangent = new THREE.Vector3();
 const streamNormal = new THREE.Vector3();
 const streamBinormal = new THREE.Vector3();
 const streamReference = new THREE.Vector3();
-const streamPointsX = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
-const streamPointsY = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
-const streamPointsZ = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
-const streamPointsRadius = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
+const runPointsX = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runPointsY = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runPointsZ = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runRadius = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runCoordinate = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runAmplitude = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const runWavelength = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS + 1);
+const ringCentersX = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * STREAM_TUBE_SUBDIVISIONS + 2);
+const ringCentersY = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * STREAM_TUBE_SUBDIVISIONS + 2);
+const ringCentersZ = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * STREAM_TUBE_SUBDIVISIONS + 2);
+const ringRadii = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * STREAM_TUBE_SUBDIVISIONS + 2);
 const dropTransform = new THREE.Object3D();
+const dropVelocity = new THREE.Vector3();
+const verticalAxis = new THREE.Vector3(0, 1, 0);
 
-/* attachPoint: 물줄기가 나오는 출구. 흐르는 중이면 관을 출구까지 이어 그립니다.
+/* 네 점 사이를 부드럽게 잇는 곡선(캐트멀-롬)의 한 성분 */
+function catmullRom(previousValue, startValue, endValue, nextValue, fraction) {
+  const fractionSquared = fraction * fraction;
+  const fractionCubed = fractionSquared * fraction;
+  return 0.5 * (
+    2 * startValue +
+    (endValue - previousValue) * fraction +
+    (2 * previousValue - 5 * startValue + 4 * endValue - nextValue) * fractionSquared +
+    (3 * startValue - previousValue + 3 * nextValue - endValue) * fractionCubed
+  );
+}
+
+/* 한 줄기(이어진 입자 묶음)를 관으로 만들어 버퍼에 붙입니다. 그린 고리 수를 돌려줍니다 */
+function appendStreamRun(streamRenderer, pointCount, firstRing, indexCountBefore) {
+  let ringCount = 0;
+  for (let pointIndex = 0; pointIndex < pointCount - 1; pointIndex += 1) {
+    const previousPoint = Math.max(0, pointIndex - 1);
+    const nextPoint = Math.min(pointCount - 1, pointIndex + 2);
+    const subdivisions = pointIndex === pointCount - 2 ? STREAM_TUBE_SUBDIVISIONS + 1 : STREAM_TUBE_SUBDIVISIONS;
+    for (let subdivisionIndex = 0; subdivisionIndex < subdivisions; subdivisionIndex += 1) {
+      if (firstRing + ringCount >= streamRenderer.maximumRings) {
+        break;
+      }
+      const fraction = subdivisionIndex / STREAM_TUBE_SUBDIVISIONS;
+      const ringIndex = firstRing + ringCount;
+      ringCentersX[ringIndex] = catmullRom(runPointsX[previousPoint], runPointsX[pointIndex], runPointsX[pointIndex + 1], runPointsX[nextPoint], fraction);
+      ringCentersY[ringIndex] = catmullRom(runPointsY[previousPoint], runPointsY[pointIndex], runPointsY[pointIndex + 1], runPointsY[nextPoint], fraction);
+      ringCentersZ[ringIndex] = catmullRom(runPointsZ[previousPoint], runPointsZ[pointIndex], runPointsZ[pointIndex + 1], runPointsZ[nextPoint], fraction);
+      const baseRadius = runRadius[pointIndex] + (runRadius[pointIndex + 1] - runRadius[pointIndex]) * fraction;
+      const coordinate = runCoordinate[pointIndex] + (runCoordinate[pointIndex + 1] - runCoordinate[pointIndex]) * fraction;
+      const waveAmplitude = Math.min(0.92, runAmplitude[pointIndex] + (runAmplitude[pointIndex + 1] - runAmplitude[pointIndex]) * fraction);
+      const waveLength = runWavelength[pointIndex];
+      ringRadii[ringIndex] = baseRadius * (1 + waveAmplitude * Math.cos((2 * Math.PI * coordinate) / waveLength));
+      ringCount += 1;
+    }
+  }
+  /* 끝은 둥글게 오므려 물줄기 끝이 막대처럼 잘려 보이지 않게 합니다 */
+  if (ringCount > 0) {
+    ringRadii[firstRing + ringCount - 1] *= 0.35;
+  }
+
+  const positions = streamRenderer.tubePositions;
+  for (let ringOffset = 0; ringOffset < ringCount; ringOffset += 1) {
+    const ringIndex = firstRing + ringOffset;
+    const previousRing = firstRing + Math.max(0, ringOffset - 1);
+    const nextRing = firstRing + Math.min(ringCount - 1, ringOffset + 1);
+    streamTangent.set(
+      ringCentersX[nextRing] - ringCentersX[previousRing],
+      ringCentersY[nextRing] - ringCentersY[previousRing],
+      ringCentersZ[nextRing] - ringCentersZ[previousRing]
+    );
+    if (streamTangent.lengthSq() < 1e-12) {
+      streamTangent.set(0, -1, 0);
+    }
+    streamTangent.normalize();
+    if (Math.abs(streamTangent.x) < 0.9) {
+      streamReference.set(1, 0, 0);
+    } else {
+      streamReference.set(0, 0, 1);
+    }
+    streamNormal.crossVectors(streamTangent, streamReference).normalize();
+    streamBinormal.crossVectors(streamTangent, streamNormal).normalize();
+    for (let sideIndex = 0; sideIndex < STREAM_TUBE_SIDES; sideIndex += 1) {
+      const sideAngle = (sideIndex / STREAM_TUBE_SIDES) * FULL_TURN_RADIANS;
+      const radius = ringRadii[ringIndex] * STREAM_VISUAL_SCALE;
+      streamRingCenter.set(ringCentersX[ringIndex], ringCentersY[ringIndex], ringCentersZ[ringIndex]);
+      streamRingCenter.addScaledVector(streamNormal, Math.cos(sideAngle) * radius);
+      streamRingCenter.addScaledVector(streamBinormal, Math.sin(sideAngle) * radius);
+      const vertexOffset = (ringIndex * STREAM_TUBE_SIDES + sideIndex) * 3;
+      positions[vertexOffset] = streamRingCenter.x;
+      positions[vertexOffset + 1] = streamRingCenter.y;
+      positions[vertexOffset + 2] = streamRingCenter.z;
+    }
+  }
+
+  let indexCount = indexCountBefore;
+  const indexes = streamRenderer.tubeIndexes;
+  for (let ringOffset = 0; ringOffset < ringCount - 1; ringOffset += 1) {
+    const ringIndex = firstRing + ringOffset;
+    for (let sideIndex = 0; sideIndex < STREAM_TUBE_SIDES; sideIndex += 1) {
+      const nextSide = (sideIndex + 1) % STREAM_TUBE_SIDES;
+      const current = ringIndex * STREAM_TUBE_SIDES + sideIndex;
+      const currentNext = ringIndex * STREAM_TUBE_SIDES + nextSide;
+      const below = (ringIndex + 1) * STREAM_TUBE_SIDES + sideIndex;
+      const belowNext = (ringIndex + 1) * STREAM_TUBE_SIDES + nextSide;
+      indexes[indexCount] = current;
+      indexes[indexCount + 1] = below;
+      indexes[indexCount + 2] = currentNext;
+      indexes[indexCount + 3] = currentNext;
+      indexes[indexCount + 4] = below;
+      indexes[indexCount + 5] = belowNext;
+      indexCount += 6;
+    }
+  }
+  return { ringCount: ringCount, indexCount: indexCount };
+}
+
+/* attachPoint: 물이 나오는 출구. 지금 흐르는 줄기는 출구까지 이어 그립니다.
    hangingDrop: 출구에 매달려 자라는 물방울 { x, y, z, radius } */
 function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
-  const intactCount = simulation.collectIntactStream(STREAM_TUBE_MAXIMUM_POINTS - 1, streamRenderer.intactIndexes);
-  let pointCount = 0;
-  if (attachPoint && intactCount > 0) {
-    streamPointsX[0] = attachPoint.x;
-    streamPointsY[0] = attachPoint.y;
-    streamPointsZ[0] = attachPoint.z;
-    streamPointsRadius[0] = simulation.streamRadiusAt(streamRenderer.intactIndexes[0]) * STREAM_VISUAL_SCALE;
-    pointCount = 1;
-  }
-  for (let intactPosition = 0; intactPosition < intactCount; intactPosition += 1) {
-    const particleIndex = streamRenderer.intactIndexes[intactPosition];
-    streamRenderer.isInTube[particleIndex] = 1;
-    streamPointsX[pointCount] = simulation.positionX[particleIndex];
-    streamPointsY[pointCount] = simulation.positionY[particleIndex];
-    streamPointsZ[pointCount] = simulation.positionZ[particleIndex];
-    streamPointsRadius[pointCount] = simulation.streamRadiusAt(particleIndex) * STREAM_VISUAL_SCALE;
-    pointCount += 1;
-  }
+  let ringsUsed = 0;
+  let indexCount = 0;
+  let particleIndex = simulation.getNewestIndex();
+  const currentStream = simulation.getCurrentStreamIdentifier();
 
-  const tubePositions = streamRenderer.tubeGeometry.getAttribute("position");
-  if (pointCount >= 2) {
-    for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
-      const previousPoint = Math.max(0, pointIndex - 1);
-      const nextPoint = Math.min(pointCount - 1, pointIndex + 1);
-      streamTangent.set(
-        streamPointsX[nextPoint] - streamPointsX[previousPoint],
-        streamPointsY[nextPoint] - streamPointsY[previousPoint],
-        streamPointsZ[nextPoint] - streamPointsZ[previousPoint]
-      ).normalize();
-      if (Math.abs(streamTangent.x) < 0.9) {
-        streamReference.set(1, 0, 0);
-      } else {
-        streamReference.set(0, 0, 1);
-      }
-      streamNormal.crossVectors(streamTangent, streamReference).normalize();
-      streamBinormal.crossVectors(streamTangent, streamNormal).normalize();
-      for (let sideIndex = 0; sideIndex < STREAM_TUBE_SIDES; sideIndex += 1) {
-        const sideAngle = (sideIndex / STREAM_TUBE_SIDES) * FULL_TURN_RADIANS;
-        const radius = streamPointsRadius[pointIndex];
-        streamPoint.set(streamPointsX[pointIndex], streamPointsY[pointIndex], streamPointsZ[pointIndex]);
-        streamPoint.addScaledVector(streamNormal, Math.cos(sideAngle) * radius);
-        streamPoint.addScaledVector(streamBinormal, Math.sin(sideAngle) * radius);
-        tubePositions.setXYZ(pointIndex * STREAM_TUBE_SIDES + sideIndex, streamPoint.x, streamPoint.y, streamPoint.z);
-      }
+  /* 가장 최근 입자부터 거슬러 올라가며, 끊어지지 않고 이어진 입자 묶음마다 관을 하나씩 그립니다 */
+  for (let visited = 0; visited < simulation.maximumParticles; visited += 1) {
+    if (!simulation.isIntactStream(particleIndex)) {
+      particleIndex = (particleIndex + simulation.maximumParticles - 1) % simulation.maximumParticles;
+      continue;
     }
-    tubePositions.needsUpdate = true;
-    streamRenderer.tubeGeometry.setDrawRange(0, (pointCount - 1) * STREAM_TUBE_SIDES * 6);
-    streamRenderer.tubeGeometry.computeVertexNormals();
-  } else {
-    streamRenderer.tubeGeometry.setDrawRange(0, 0);
+    const runStream = simulation.streamIdentifier[particleIndex];
+    let pointCount = 0;
+    const isAttachedRun = attachPoint && runStream === currentStream && visited === 0;
+    if (isAttachedRun) {
+      runPointsX[0] = attachPoint.x;
+      runPointsY[0] = attachPoint.y;
+      runPointsZ[0] = attachPoint.z;
+      runRadius[0] = simulation.streamRadiusAt(particleIndex);
+      runCoordinate[0] = simulation.materialCoordinate[particleIndex] + 0.3;
+      runAmplitude[0] = simulation.amplitude[particleIndex];
+      runWavelength[0] = simulation.wavelength[particleIndex];
+      pointCount = 1;
+    }
+    while (
+      pointCount < STREAM_TUBE_MAXIMUM_POINTS &&
+      visited < simulation.maximumParticles &&
+      simulation.isIntactStream(particleIndex) &&
+      simulation.streamIdentifier[particleIndex] === runStream
+    ) {
+      streamRenderer.isInTube[particleIndex] = 1;
+      runPointsX[pointCount] = simulation.positionX[particleIndex];
+      runPointsY[pointCount] = simulation.positionY[particleIndex];
+      runPointsZ[pointCount] = simulation.positionZ[particleIndex];
+      runRadius[pointCount] = simulation.streamRadiusAt(particleIndex);
+      runCoordinate[pointCount] = simulation.materialCoordinate[particleIndex];
+      runAmplitude[pointCount] = simulation.amplitude[particleIndex];
+      runWavelength[pointCount] = simulation.wavelength[particleIndex];
+      pointCount += 1;
+      visited += 1;
+      particleIndex = (particleIndex + simulation.maximumParticles - 1) % simulation.maximumParticles;
+    }
+    if (pointCount >= 2 && ringsUsed < streamRenderer.maximumRings - 2) {
+      const appended = appendStreamRun(streamRenderer, pointCount, ringsUsed, indexCount);
+      ringsUsed += appended.ringCount;
+      indexCount = appended.indexCount;
+    } else if (pointCount === 1 && !isAttachedRun) {
+      /* 혼자 남은 조각은 물방울로 그립니다 */
+      streamRenderer.isInTube[(particleIndex + 1) % simulation.maximumParticles] = 0;
+    }
   }
 
+  const tubeGeometry = streamRenderer.tubeGeometry;
+  tubeGeometry.getAttribute("position").needsUpdate = true;
+  tubeGeometry.getIndex().needsUpdate = true;
+  tubeGeometry.setDrawRange(0, indexCount);
+  if (indexCount > 0) {
+    tubeGeometry.computeVertexNormals();
+  }
+
+  /* 끊어져 나온 물방울: 떨어지는 방향으로 살짝 길쭉하게 그립니다 */
   let dropCount = 0;
-  for (let particleIndex = 0; particleIndex < simulation.maximumParticles; particleIndex += 1) {
-    if (!simulation.isAlive[particleIndex]) {
+  for (let dropIndex = 0; dropIndex < simulation.maximumParticles; dropIndex += 1) {
+    if (!simulation.isAlive[dropIndex]) {
       continue;
     }
-    if (streamRenderer.isInTube[particleIndex]) {
-      streamRenderer.isInTube[particleIndex] = 0;
+    if (streamRenderer.isInTube[dropIndex]) {
+      streamRenderer.isInTube[dropIndex] = 0;
       continue;
     }
-    dropTransform.position.set(
-      simulation.positionX[particleIndex],
-      simulation.positionY[particleIndex],
-      simulation.positionZ[particleIndex]
-    );
-    /* 떨어지는 물방울은 공기 저항으로 아래가 살짝 납작해집니다 */
-    const dropRadius = simulation.dropRadiusFor(simulation.mass[particleIndex]) * STREAM_VISUAL_SCALE;
-    dropTransform.scale.set(dropRadius, dropRadius * 1.15, dropRadius);
+    const dropRadius = simulation.dropRadiusFor(simulation.mass[dropIndex]) * STREAM_VISUAL_SCALE;
+    dropVelocity.set(simulation.velocityX[dropIndex], simulation.velocityY[dropIndex], simulation.velocityZ[dropIndex]);
+    const speed = dropVelocity.length();
+    dropTransform.position.set(simulation.positionX[dropIndex], simulation.positionY[dropIndex], simulation.positionZ[dropIndex]);
+    if (speed > 1e-3) {
+      dropTransform.quaternion.setFromUnitVectors(verticalAxis, dropVelocity.divideScalar(speed));
+    } else {
+      dropTransform.quaternion.identity();
+    }
+    const stretch = 1 + Math.min(0.25, speed / 600);
+    dropTransform.scale.set(dropRadius / Math.sqrt(stretch), dropRadius * stretch, dropRadius / Math.sqrt(stretch));
     dropTransform.updateMatrix();
     streamRenderer.dropMesh.setMatrixAt(dropCount, dropTransform.matrix);
     dropCount += 1;
   }
   if (hangingDrop && hangingDrop.radius > 0.01) {
     dropTransform.position.set(hangingDrop.x, hangingDrop.y - hangingDrop.radius * 0.8, hangingDrop.z);
+    dropTransform.quaternion.identity();
     dropTransform.scale.set(hangingDrop.radius, hangingDrop.radius * 1.25, hangingDrop.radius);
     dropTransform.updateMatrix();
     streamRenderer.dropMesh.setMatrixAt(dropCount, dropTransform.matrix);
@@ -898,6 +1032,59 @@ function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
   }
   streamRenderer.dropMesh.count = dropCount;
   streamRenderer.dropMesh.instanceMatrix.needsUpdate = true;
+}
+
+/* 물이 닿은 수면에 퍼져 나가는 동그란 물결 */
+function createRippleSystem(color) {
+  const ripples = [];
+  for (let rippleIndex = 0; rippleIndex < RIPPLE_COUNT; rippleIndex += 1) {
+    const ripple = new THREE.Mesh(
+      new THREE.RingGeometry(0.82, 1, 40),
+      new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })
+    );
+    ripple.rotation.x = -Math.PI / 2;
+    ripple.visible = false;
+    scene.add(ripple);
+    ripples.push({ mesh: ripple, age: 0, size: 1 });
+  }
+  return { ripples: ripples, nextIndex: 0, secondsSinceLastSpawn: 1 };
+}
+
+function spawnRipple(rippleSystem, positionX, positionY, positionZ, size) {
+  if (rippleSystem.secondsSinceLastSpawn < RIPPLE_SPAWN_INTERVAL_SECONDS) {
+    return;
+  }
+  rippleSystem.secondsSinceLastSpawn = 0;
+  const ripple = rippleSystem.ripples[rippleSystem.nextIndex];
+  rippleSystem.nextIndex = (rippleSystem.nextIndex + 1) % RIPPLE_COUNT;
+  ripple.age = 0;
+  ripple.size = size;
+  ripple.mesh.position.set(positionX, positionY + 0.015, positionZ);
+  ripple.mesh.visible = true;
+}
+
+function updateRippleSystem(rippleSystem, simulationSeconds) {
+  rippleSystem.secondsSinceLastSpawn += simulationSeconds;
+  rippleSystem.ripples.forEach(function growRipple(ripple) {
+    if (!ripple.mesh.visible) {
+      return;
+    }
+    ripple.age += simulationSeconds;
+    const progress = ripple.age / RIPPLE_LIFETIME_SECONDS;
+    if (progress >= 1) {
+      ripple.mesh.visible = false;
+      return;
+    }
+    const scale = ripple.size * (0.15 + progress);
+    ripple.mesh.scale.set(scale, scale, scale);
+    ripple.mesh.material.opacity = 0.45 * (1 - progress);
+  });
+}
+
+function clearRippleSystem(rippleSystem) {
+  rippleSystem.ripples.forEach(function hideRipple(ripple) {
+    ripple.mesh.visible = false;
+  });
 }
 
 /* 물이 어딘가에 부딪힐 때 튀는 작은 물보라 */
@@ -974,6 +1161,11 @@ const dripStream = StreamPhysics.createStreamSimulation({
 const kettleStreamRenderer = createStreamRenderer(waterLiquidMaterial, KETTLE_STREAM_MAXIMUM_PARTICLES);
 const dripStreamRenderer = createStreamRenderer(coffeeLiquidMaterial, DRIP_STREAM_MAXIMUM_PARTICLES);
 const waterSplash = createSplashSystem(0xcfe9f7);
+const waterRipples = createRippleSystem(0xffffff);
+const coffeeRipples = createRippleSystem(0xd9b38c);
+const previousSpoutTip = new THREE.Vector3();
+const previousDripOutlet = new THREE.Vector3();
+let hasPreviousSpoutTip = false;
 const coffeeSplash = createSplashSystem(0x6b3a1c);
 
 /* ---------- 그라인더 ---------- */
@@ -1729,6 +1921,7 @@ function landKettleParticle(particleIndex) {
       if (worldY <= surfaceY) {
         brewModel.addWaterAt(normalizedX, normalizedZ, particleMass);
         spawnSplash(waterSplash, worldX, surfaceY, worldZ, 1, 35);
+        spawnRipple(waterRipples, worldX, surfaceY, worldZ, 0.9);
         return true;
       }
     }
@@ -1777,9 +1970,14 @@ function updateWater(simulationSeconds, deltaSeconds) {
   }
 
   computeSpoutExit();
-  kettleStream.emit(simulationSeconds, spoutTipWorld, spoutDirectionWorld, flowGramsPerSecond);
-  kettleStream.step(simulationSeconds, landKettleParticle);
+  if (!hasPreviousSpoutTip) {
+    previousSpoutTip.copy(spoutTipWorld);
+    hasPreviousSpoutTip = true;
+  }
+  kettleStream.advance(simulationSeconds, previousSpoutTip, spoutTipWorld, spoutDirectionWorld, flowGramsPerSecond, landKettleParticle);
+  previousSpoutTip.copy(spoutTipWorld);
   updateSplashSystem(waterSplash, simulationSeconds);
+  updateRippleSystem(waterRipples, simulationSeconds);
 
   if (brewModel.state.phase === "brewing") {
     brewModel.advance(simulationSeconds, 0);
@@ -1815,6 +2013,7 @@ function landDripParticle(particleIndex) {
   }
   dripState.landedGrams += dripStream.mass[particleIndex];
   spawnSplash(coffeeSplash, dripStream.positionX[particleIndex], surfaceY, dripStream.positionZ[particleIndex], 2, 30);
+  spawnRipple(coffeeRipples, dripStream.positionX[particleIndex], surfaceY, dripStream.positionZ[particleIndex], 1.4);
   return true;
 }
 
@@ -1829,9 +2028,10 @@ function updateDrip(simulationSeconds) {
   }
 
   dripOutlet.set(dripperGroup.position.x, DRIPPER_OUTLET_HEIGHT, dripperGroup.position.z);
-  dripStream.emit(simulationSeconds, dripOutlet, dripDirection, flowGramsPerSecond);
-  dripStream.step(simulationSeconds, landDripParticle);
+  dripStream.advance(simulationSeconds, previousDripOutlet, dripOutlet, dripDirection, flowGramsPerSecond, landDripParticle);
+  previousDripOutlet.copy(dripOutlet);
   updateSplashSystem(coffeeSplash, simulationSeconds);
+  updateRippleSystem(coffeeRipples, simulationSeconds);
 
   hangingDropDescription.x = dripOutlet.x;
   hangingDropDescription.y = dripOutlet.y;
@@ -1874,6 +2074,10 @@ function resetWorkbench() {
   dripStream.reset();
   clearSplashSystem(waterSplash);
   clearSplashSystem(coffeeSplash);
+  clearRippleSystem(waterRipples);
+  clearRippleSystem(coffeeRipples);
+  hasPreviousSpoutTip = false;
+  previousDripOutlet.set(0, DRIPPER_OUTLET_HEIGHT, 0);
   dripState.emittedGrams = 0;
   dripState.landedGrams = 0;
   pourState.tiltProgress = 0;
@@ -2719,6 +2923,14 @@ CoffeeSession.simulatorDebug = {
   },
   getJarState: function getJarState() {
     return jarState;
+  },
+  getStreamRenderStats: function getStreamRenderStats() {
+    return {
+      kettleTubeIndexes: kettleStreamRenderer.tubeGeometry.drawRange.count,
+      kettleDrops: kettleStreamRenderer.dropMesh.count,
+      dripTubeIndexes: dripStreamRenderer.tubeGeometry.drawRange.count,
+      dripDrops: dripStreamRenderer.dropMesh.count
+    };
   },
   getStreamState: function getStreamState() {
     return {

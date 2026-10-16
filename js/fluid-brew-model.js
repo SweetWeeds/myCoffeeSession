@@ -182,7 +182,8 @@
       drawdownCompleteSecond: null,
       pourSegments: [],
       initialBedUnevenness: null,
-      groundsAtFirstPourGrams: null
+      groundsAtFirstPourGrams: null,
+      spilledGrams: 0
     };
 
     const targetWaterGrams = settings.doseGrams * settings.ratio;
@@ -341,24 +342,60 @@
       state.beverageGrams += grams;
     }
 
-    function addPouredWater(pourGrams) {
-      state.totalPouredGrams += pourGrams;
+    /* 드리퍼에 들어온 물을 저울 무게와 지금 붓고 있는 한 번의 붓기에 더합니다 */
+    function accountPouredWater(grams) {
+      state.totalPouredGrams += grams;
       const currentSegment = state.pourSegments[state.pourSegments.length - 1];
-      currentSegment.grams += pourGrams;
-      currentSegment.endSecond = state.elapsedSeconds;
+      if (currentSegment) {
+        currentSegment.grams += grams;
+        currentSegment.endSecond = state.elapsedSeconds;
+      }
       state.drawdownCompleteSecond = null;
+    }
 
+    function addPouredWater(pourGrams) {
+      accountPouredWater(pourGrams);
       /* 물줄기가 원두 층 밖, 즉 필터 종이에 떨어지면 원두를 거치지 않고 바로 흘러내립니다 */
       const pourDistance = Math.sqrt(state.pourX * state.pourX + state.pourY * state.pourY);
       if (pourDistance > 1) {
         sendStraightToServer(pourGrams);
         return;
       }
+      distributeWater(state.pourX, state.pourY, pourGrams);
+    }
 
+    /* 물 입자 하나가 원두 층(또는 그 위의 물)에 떨어진 경우 */
+    function addWaterAt(normalizedX, normalizedY, grams) {
+      if (state.phase !== "brewing") {
+        return;
+      }
+      accountPouredWater(grams);
+      if (Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY) > 1) {
+        sendStraightToServer(grams);
+        return;
+      }
+      distributeWater(normalizedX, normalizedY, grams);
+    }
+
+    /* 물 입자가 필터 종이에 떨어진 경우: 원두를 거치지 않고 서버로 흘러내립니다 */
+    function addPaperWater(grams) {
+      if (state.phase !== "brewing") {
+        return;
+      }
+      accountPouredWater(grams);
+      sendStraightToServer(grams);
+    }
+
+    /* 드리퍼를 벗어나 작업대에 쏟아진 물. 커피에는 들어가지 않습니다 */
+    function addSpilledWater(grams) {
+      state.spilledGrams += grams;
+    }
+
+    function distributeWater(centerX, centerY, pourGrams) {
       let weightSum = 0;
       const splashCellRange = Math.ceil((POUR_SPLASH_RADIUS * 2.5 * (GRID_SIZE - 1)) / 2);
-      const centerColumn = Math.round(((state.pourX + 1) / 2) * (GRID_SIZE - 1));
-      const centerRow = Math.round(((state.pourY + 1) / 2) * (GRID_SIZE - 1));
+      const centerColumn = Math.round(((centerX + 1) / 2) * (GRID_SIZE - 1));
+      const centerRow = Math.round(((centerY + 1) / 2) * (GRID_SIZE - 1));
       const splashCellIndexes = [];
       const splashWeights = [];
       for (let row = centerRow - splashCellRange; row <= centerRow + splashCellRange; row += 1) {
@@ -367,8 +404,8 @@
             continue;
           }
           const cellIndex = row * GRID_SIZE + column;
-          const deltaX = cellCenterX(cellIndex) - state.pourX;
-          const deltaY = cellCenterY(cellIndex) - state.pourY;
+          const deltaX = cellCenterX(cellIndex) - centerX;
+          const deltaY = cellCenterY(cellIndex) - centerY;
           const weight = Math.exp(-(deltaX * deltaX + deltaY * deltaY) / (2 * POUR_SPLASH_RADIUS * POUR_SPLASH_RADIUS));
           splashCellIndexes.push(cellIndex);
           splashWeights.push(weight);
@@ -588,7 +625,7 @@
         remainingSeconds -= stepSeconds;
         state.elapsedSeconds += stepSeconds;
 
-        if (state.isPouring) {
+        if (state.isPouring && pourRateGramsPerSecond > 0) {
           addPouredWater(pourRateGramsPerSecond * stepSeconds);
         }
         updateFlow(stepSeconds);
@@ -726,6 +763,7 @@
         leftoverWaterGrams: leftoverWaterGrams,
         bypassGrams: state.bypassGrams,
         wallPouredGrams: state.wallPouredGrams,
+        spilledGrams: state.spilledGrams,
         dryCoffeePercent: dryCoffeePercent,
         uniformityPercent: uniformityPercent,
         initialBedUnevenness: state.initialBedUnevenness,
@@ -777,6 +815,9 @@
       shakeDripper: shakeDripper,
       measureBedUnevenness: measureBedUnevenness,
       setPourPosition: setPourPosition,
+      addWaterAt: addWaterAt,
+      addPaperWater: addPaperWater,
+      addSpilledWater: addSpilledWater,
       startPouring: startPouring,
       stopPouring: stopPouring,
       advance: advance,

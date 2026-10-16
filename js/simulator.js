@@ -13,6 +13,7 @@ const CoffeeSession = window.CoffeeSession;
 const FluidBrewModel = CoffeeSession.FluidBrewModel;
 const PaperWettingModel = CoffeeSession.PaperWettingModel;
 const GrinderPhysics = CoffeeSession.GrinderPhysics;
+const StreamPhysics = CoffeeSession.StreamPhysics;
 
 /* ---------- 상수 ---------- */
 
@@ -40,7 +41,8 @@ const WATER_MILLIMETER_TO_WORLD = 0.04;
 const HIDDEN_WATER_THRESHOLD_MILLIMETERS = 0.05;
 const SERVER_CAPACITY_GRAMS = 400;
 const SERVER_INNER_HEIGHT = 5.4;
-const DRIPPER_FOCUS = new THREE.Vector3(0, 2.6, 0);
+/* 주전자를 들었을 때(높이 11)부터 서버 바닥까지 한 화면에 들어오도록 드리퍼보다 조금 위를 바라봅니다 */
+const DRIPPER_FOCUS = new THREE.Vector3(0, 4.5, 0);
 
 /* 그라인더: 아래는 유리 가루 통, 가운데는 날이 든 몸통, 위는 원두가 보이는 유리 호퍼 */
 const GRINDER_POSITION = new THREE.Vector3(-12, 0, -1);
@@ -80,12 +82,30 @@ const FALLING_PARTICLES_PER_BEAN = 10;
 const SHAKE_MINIMUM_TRAVEL = 0.5;
 
 /* 주전자와 물 */
-const KETTLE_TIP_HEIGHT = 10.5;
-const KETTLE_PARKED_TIP = new THREE.Vector3(10, TABLE_HEIGHT + 2.9, 5);
+/* 주전자 몸통 가운데 높이. 몸통 아랫면이 드리퍼 테두리보다 조금 위에 오도록 잡았습니다 */
+const KETTLE_BODY_HEIGHT = 11;
+const KETTLE_PARKED_BODY = new THREE.Vector3(10, TABLE_HEIGHT + 1.7, 5);
+const KETTLE_TILT_SECONDS = 0.35;
+const KETTLE_FLOW_START_TILT = 0.45;
+const KETTLE_MAXIMUM_TILT_RADIANS = { gentle: 0.3, normal: 0.4, strong: 0.52 };
+const SPOUT_OUTLET_RADIUS = 0.13;
+const KETTLE_JET_THRESHOLD_GRAMS_PER_SECOND = 0.6;
+const KETTLE_STREAM_MAXIMUM_PARTICLES = 900;
 const BUBBLE_COUNT = 320;
-const POUR_STREAM_RADII = { gentle: 0.07, normal: 0.11, strong: 0.16 };
 const AUTOMATIC_POUR_ANGULAR_SPEED = 2.6;
 const PAPER_DIRECT_HIT_WETNESS_PER_GRAM = 0.08;
+
+/* 드리퍼 바닥 구멍과 그 아래로 떨어지는 커피 */
+const DRIPPER_OUTLET_HEIGHT = -0.45;
+const DRIPPER_OUTLET_RADIUS = 0.2;
+const DRIP_JET_THRESHOLD_GRAMS_PER_SECOND = 1.5;
+const DRIP_STREAM_MAXIMUM_PARTICLES = 500;
+
+/* 물줄기 그리기: 실제 굵기(1mm 안팎)로는 화면에서 잘 안 보여 조금 굵게 그립니다 */
+const STREAM_VISUAL_SCALE = 1.4;
+const STREAM_TUBE_MAXIMUM_POINTS = 80;
+const STREAM_TUBE_SIDES = 8;
+const SPLASH_PARTICLE_COUNT = 240;
 
 /* 필터 종이 격자 */
 const PAPER_ANGLE_SEGMENTS = 72;
@@ -93,9 +113,9 @@ const PAPER_HEIGHT_ROWS = 28;
 const PAPER_CONTACT_SAMPLE_RADIUS = 0.92;
 
 const CAMERA_OFFSETS = {
-  angled: new THREE.Vector3(0, 14, 16.5),
-  top: new THREE.Vector3(0, 22, 0.01),
-  side: new THREE.Vector3(0, 4, 21)
+  angled: new THREE.Vector3(0, 17, 21.5),
+  top: new THREE.Vector3(0, 27, 0.01),
+  side: new THREE.Vector3(0, 3, 28)
 };
 const CAMERA_ANIMATION_SECONDS = 0.6;
 
@@ -116,7 +136,7 @@ const TOOL_HINTS = {
   grind: "그라인더 위에서 누른 채 시계 방향으로 원을 그리세요. 원두가 서로 부딪히며 가운데 날로 빨려 들어갑니다.",
   grounds: "가루 통을 드리퍼 위로 끌고 가서 누르고 있으면 가루가 쏟아집니다.",
   shake: "누른 채 좌우로 빠르게 끌면 드리퍼를 흔들어 원두 층을 평평하게 합니다.",
-  water: "누른 채 원을 그리며 부으세요. 첫 물은 원두의 2–3배만 붓고 30–45초 기다리면 뜸이 듭니다. 필터 종이에 직접 부으면 물이 원두를 거치지 않습니다.",
+  water: "포인터로 주전자를 잡고 움직이세요. 누르고 있으면 주전자가 기울어 물줄기가 나옵니다. 물이 떨어지는 곳을 보며 원을 그리고, 첫 물은 원두의 2–3배만 부어 30–45초 뜸을 들이세요.",
   camera: "끌어서 시점을 돌리고, 휠이나 두 손가락으로 확대·축소하세요."
 };
 
@@ -227,11 +247,17 @@ const pourState = {
   isPointerPouring: false,
   isKeyboardPouring: false,
   isAutomaticRunning: false,
-  aimX: 0,
-  aimZ: 0,
+  kettleTargetX: 3,
+  kettleTargetZ: 2,
+  tiltProgress: 0,
   automaticAngle: 0,
   timelinePoints: [{ second: 0, grams: 0 }],
   nextTimelineSampleSecond: TIMELINE_SAMPLE_SECONDS
+};
+
+const dripState = {
+  emittedGrams: 0,
+  landedGrams: 0
 };
 
 const activePointerIds = new Set();
@@ -691,6 +717,7 @@ dripperGroup.add(
 );
 
 /* ---------- 주전자 ---------- */
+/* 사용자는 주전자 몸통을 잡고 움직입니다. 몸통 가운데가 기준점이고, 누르고 있으면 주전자가 기울어 주둥이로 물이 나옵니다 */
 
 const kettlePivot = new THREE.Group();
 const kettleTilt = new THREE.Group();
@@ -711,26 +738,243 @@ kettleHandle.rotation.z = Math.PI / 2;
 kettleHandle.position.x = -2.1;
 kettleModel.add(kettleHandle);
 
-const spoutTipLocal = new THREE.Vector3(5.8, 1.3, 0);
+/* 드립 주전자의 가는 목은 끝이 아래를 향하게 휘어 있어서 물이 거의 수직으로 떨어집니다 */
+const spoutTipLocal = new THREE.Vector3(5.85, 0.55, 0);
 const spoutCurve = new THREE.CatmullRomCurve3([
   new THREE.Vector3(1.8, -0.9, 0),
   new THREE.Vector3(3.1, 0.1, 0),
-  new THREE.Vector3(4.3, 1.4, 0),
-  new THREE.Vector3(5.3, 1.65, 0),
+  new THREE.Vector3(4.3, 1.35, 0),
+  new THREE.Vector3(5.3, 1.55, 0),
+  new THREE.Vector3(5.75, 1.1, 0),
   spoutTipLocal.clone()
 ]);
-kettleModel.add(new THREE.Mesh(new THREE.TubeGeometry(spoutCurve, 40, 0.17, 10, false), steelMaterial));
-kettleModel.position.copy(spoutTipLocal).multiplyScalar(-1);
+kettleModel.add(new THREE.Mesh(new THREE.TubeGeometry(spoutCurve, 48, 0.17, 10, false), steelMaterial));
+const spoutDirectionLocal = spoutCurve.getTangent(1).normalize();
 /* 주전자 몸통은 화면 오른쪽에, 주둥이는 왼쪽(드리퍼 쪽)을 향하게 둡니다 */
 kettlePivot.rotation.y = Math.PI;
-kettlePivot.position.copy(KETTLE_PARKED_TIP);
+kettlePivot.position.copy(KETTLE_PARKED_BODY);
 
-const pourStream = new THREE.Mesh(
-  new THREE.CylinderGeometry(1, 1, 1, 12, 1, true),
-  new THREE.MeshStandardMaterial({ color: 0xa9d6ee, transparent: true, opacity: 0.75, roughness: 0.05 })
-);
-pourStream.visible = false;
-scene.add(pourStream);
+/* ---------- 물줄기와 물방울 그리기 ---------- */
+
+const waterLiquidMaterial = new THREE.MeshStandardMaterial({
+  color: 0xbfe3f5,
+  transparent: true,
+  opacity: 0.82,
+  roughness: 0.05,
+  metalness: 0.1
+});
+const coffeeLiquidMaterial = new THREE.MeshStandardMaterial({ color: 0x5a2f16, transparent: true, opacity: 0.92, roughness: 0.1 });
+
+/* 이어진 물줄기는 입자들을 잇는 관(튜브)으로, 끊어진 물방울은 작은 공으로 그립니다 */
+function createStreamRenderer(material, maximumParticles) {
+  const ringVertexCount = STREAM_TUBE_SIDES;
+  const tubePositions = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS * ringVertexCount * 3);
+  const tubeIndexes = [];
+  for (let pointIndex = 0; pointIndex < STREAM_TUBE_MAXIMUM_POINTS - 1; pointIndex += 1) {
+    for (let sideIndex = 0; sideIndex < ringVertexCount; sideIndex += 1) {
+      const nextSide = (sideIndex + 1) % ringVertexCount;
+      const current = pointIndex * ringVertexCount + sideIndex;
+      const currentNext = pointIndex * ringVertexCount + nextSide;
+      const below = (pointIndex + 1) * ringVertexCount + sideIndex;
+      const belowNext = (pointIndex + 1) * ringVertexCount + nextSide;
+      tubeIndexes.push(current, below, currentNext, currentNext, below, belowNext);
+    }
+  }
+  const tubeGeometry = new THREE.BufferGeometry();
+  tubeGeometry.setAttribute("position", new THREE.BufferAttribute(tubePositions, 3));
+  tubeGeometry.setIndex(tubeIndexes);
+  tubeGeometry.setDrawRange(0, 0);
+  const tubeMesh = new THREE.Mesh(tubeGeometry, material);
+  tubeMesh.frustumCulled = false;
+  scene.add(tubeMesh);
+
+  const dropMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), material, maximumParticles + 1);
+  dropMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  dropMesh.frustumCulled = false;
+  dropMesh.count = 0;
+  scene.add(dropMesh);
+
+  return {
+    tubeGeometry: tubeGeometry,
+    dropMesh: dropMesh,
+    intactIndexes: new Int32Array(STREAM_TUBE_MAXIMUM_POINTS),
+    isInTube: new Uint8Array(maximumParticles)
+  };
+}
+
+const streamPoint = new THREE.Vector3();
+const streamTangent = new THREE.Vector3();
+const streamNormal = new THREE.Vector3();
+const streamBinormal = new THREE.Vector3();
+const streamReference = new THREE.Vector3();
+const streamPointsX = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
+const streamPointsY = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
+const streamPointsZ = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
+const streamPointsRadius = new Float32Array(STREAM_TUBE_MAXIMUM_POINTS);
+const dropTransform = new THREE.Object3D();
+
+/* attachPoint: 물줄기가 나오는 출구. 흐르는 중이면 관을 출구까지 이어 그립니다.
+   hangingDrop: 출구에 매달려 자라는 물방울 { x, y, z, radius } */
+function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
+  const intactCount = simulation.collectIntactStream(STREAM_TUBE_MAXIMUM_POINTS - 1, streamRenderer.intactIndexes);
+  let pointCount = 0;
+  if (attachPoint && intactCount > 0) {
+    streamPointsX[0] = attachPoint.x;
+    streamPointsY[0] = attachPoint.y;
+    streamPointsZ[0] = attachPoint.z;
+    streamPointsRadius[0] = simulation.streamRadiusAt(streamRenderer.intactIndexes[0]) * STREAM_VISUAL_SCALE;
+    pointCount = 1;
+  }
+  for (let intactPosition = 0; intactPosition < intactCount; intactPosition += 1) {
+    const particleIndex = streamRenderer.intactIndexes[intactPosition];
+    streamRenderer.isInTube[particleIndex] = 1;
+    streamPointsX[pointCount] = simulation.positionX[particleIndex];
+    streamPointsY[pointCount] = simulation.positionY[particleIndex];
+    streamPointsZ[pointCount] = simulation.positionZ[particleIndex];
+    streamPointsRadius[pointCount] = simulation.streamRadiusAt(particleIndex) * STREAM_VISUAL_SCALE;
+    pointCount += 1;
+  }
+
+  const tubePositions = streamRenderer.tubeGeometry.getAttribute("position");
+  if (pointCount >= 2) {
+    for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
+      const previousPoint = Math.max(0, pointIndex - 1);
+      const nextPoint = Math.min(pointCount - 1, pointIndex + 1);
+      streamTangent.set(
+        streamPointsX[nextPoint] - streamPointsX[previousPoint],
+        streamPointsY[nextPoint] - streamPointsY[previousPoint],
+        streamPointsZ[nextPoint] - streamPointsZ[previousPoint]
+      ).normalize();
+      if (Math.abs(streamTangent.x) < 0.9) {
+        streamReference.set(1, 0, 0);
+      } else {
+        streamReference.set(0, 0, 1);
+      }
+      streamNormal.crossVectors(streamTangent, streamReference).normalize();
+      streamBinormal.crossVectors(streamTangent, streamNormal).normalize();
+      for (let sideIndex = 0; sideIndex < STREAM_TUBE_SIDES; sideIndex += 1) {
+        const sideAngle = (sideIndex / STREAM_TUBE_SIDES) * FULL_TURN_RADIANS;
+        const radius = streamPointsRadius[pointIndex];
+        streamPoint.set(streamPointsX[pointIndex], streamPointsY[pointIndex], streamPointsZ[pointIndex]);
+        streamPoint.addScaledVector(streamNormal, Math.cos(sideAngle) * radius);
+        streamPoint.addScaledVector(streamBinormal, Math.sin(sideAngle) * radius);
+        tubePositions.setXYZ(pointIndex * STREAM_TUBE_SIDES + sideIndex, streamPoint.x, streamPoint.y, streamPoint.z);
+      }
+    }
+    tubePositions.needsUpdate = true;
+    streamRenderer.tubeGeometry.setDrawRange(0, (pointCount - 1) * STREAM_TUBE_SIDES * 6);
+    streamRenderer.tubeGeometry.computeVertexNormals();
+  } else {
+    streamRenderer.tubeGeometry.setDrawRange(0, 0);
+  }
+
+  let dropCount = 0;
+  for (let particleIndex = 0; particleIndex < simulation.maximumParticles; particleIndex += 1) {
+    if (!simulation.isAlive[particleIndex]) {
+      continue;
+    }
+    if (streamRenderer.isInTube[particleIndex]) {
+      streamRenderer.isInTube[particleIndex] = 0;
+      continue;
+    }
+    dropTransform.position.set(
+      simulation.positionX[particleIndex],
+      simulation.positionY[particleIndex],
+      simulation.positionZ[particleIndex]
+    );
+    /* 떨어지는 물방울은 공기 저항으로 아래가 살짝 납작해집니다 */
+    const dropRadius = simulation.dropRadiusFor(simulation.mass[particleIndex]) * STREAM_VISUAL_SCALE;
+    dropTransform.scale.set(dropRadius, dropRadius * 1.15, dropRadius);
+    dropTransform.updateMatrix();
+    streamRenderer.dropMesh.setMatrixAt(dropCount, dropTransform.matrix);
+    dropCount += 1;
+  }
+  if (hangingDrop && hangingDrop.radius > 0.01) {
+    dropTransform.position.set(hangingDrop.x, hangingDrop.y - hangingDrop.radius * 0.8, hangingDrop.z);
+    dropTransform.scale.set(hangingDrop.radius, hangingDrop.radius * 1.25, hangingDrop.radius);
+    dropTransform.updateMatrix();
+    streamRenderer.dropMesh.setMatrixAt(dropCount, dropTransform.matrix);
+    dropCount += 1;
+  }
+  streamRenderer.dropMesh.count = dropCount;
+  streamRenderer.dropMesh.instanceMatrix.needsUpdate = true;
+}
+
+/* 물이 어딘가에 부딪힐 때 튀는 작은 물보라 */
+function createSplashSystem(color) {
+  const positions = new Float32Array(SPLASH_PARTICLE_COUNT * 3);
+  for (let particleIndex = 0; particleIndex < SPLASH_PARTICLE_COUNT; particleIndex += 1) {
+    positions[particleIndex * 3 + 1] = -1000;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const points = new THREE.Points(geometry, new THREE.PointsMaterial({ color: color, size: 0.07, transparent: true, opacity: 0.85 }));
+  points.frustumCulled = false;
+  scene.add(points);
+  return {
+    geometry: geometry,
+    positions: positions,
+    velocities: new Float32Array(SPLASH_PARTICLE_COUNT * 3),
+    lifetimes: new Float32Array(SPLASH_PARTICLE_COUNT),
+    nextIndex: 0
+  };
+}
+
+function spawnSplash(splashSystem, positionX, positionY, positionZ, count, speed) {
+  for (let spawnIndex = 0; spawnIndex < count; spawnIndex += 1) {
+    const particleIndex = splashSystem.nextIndex;
+    splashSystem.nextIndex = (splashSystem.nextIndex + 1) % SPLASH_PARTICLE_COUNT;
+    const angle = Math.random() * FULL_TURN_RADIANS;
+    const horizontalSpeed = speed * (0.3 + Math.random() * 0.5);
+    splashSystem.positions[particleIndex * 3] = positionX;
+    splashSystem.positions[particleIndex * 3 + 1] = positionY + 0.02;
+    splashSystem.positions[particleIndex * 3 + 2] = positionZ;
+    splashSystem.velocities[particleIndex * 3] = Math.cos(angle) * horizontalSpeed;
+    splashSystem.velocities[particleIndex * 3 + 1] = speed * (0.6 + Math.random() * 0.6);
+    splashSystem.velocities[particleIndex * 3 + 2] = Math.sin(angle) * horizontalSpeed;
+    splashSystem.lifetimes[particleIndex] = 0.12 + Math.random() * 0.12;
+  }
+}
+
+function updateSplashSystem(splashSystem, simulationSeconds) {
+  for (let particleIndex = 0; particleIndex < SPLASH_PARTICLE_COUNT; particleIndex += 1) {
+    if (splashSystem.lifetimes[particleIndex] <= 0) {
+      continue;
+    }
+    splashSystem.lifetimes[particleIndex] -= simulationSeconds;
+    if (splashSystem.lifetimes[particleIndex] <= 0) {
+      splashSystem.positions[particleIndex * 3 + 1] = -1000;
+      continue;
+    }
+    splashSystem.velocities[particleIndex * 3 + 1] -= StreamPhysics.gravity * simulationSeconds;
+    splashSystem.positions[particleIndex * 3] += splashSystem.velocities[particleIndex * 3] * simulationSeconds;
+    splashSystem.positions[particleIndex * 3 + 1] += splashSystem.velocities[particleIndex * 3 + 1] * simulationSeconds;
+    splashSystem.positions[particleIndex * 3 + 2] += splashSystem.velocities[particleIndex * 3 + 2] * simulationSeconds;
+  }
+  splashSystem.geometry.getAttribute("position").needsUpdate = true;
+}
+
+function clearSplashSystem(splashSystem) {
+  splashSystem.lifetimes.fill(0);
+  for (let particleIndex = 0; particleIndex < SPLASH_PARTICLE_COUNT; particleIndex += 1) {
+    splashSystem.positions[particleIndex * 3 + 1] = -1000;
+  }
+}
+
+const kettleStream = StreamPhysics.createStreamSimulation({
+  maximumParticles: KETTLE_STREAM_MAXIMUM_PARTICLES,
+  outletRadiusCentimeters: SPOUT_OUTLET_RADIUS,
+  jetThresholdGramsPerSecond: KETTLE_JET_THRESHOLD_GRAMS_PER_SECOND
+});
+const dripStream = StreamPhysics.createStreamSimulation({
+  maximumParticles: DRIP_STREAM_MAXIMUM_PARTICLES,
+  outletRadiusCentimeters: DRIPPER_OUTLET_RADIUS,
+  jetThresholdGramsPerSecond: DRIP_JET_THRESHOLD_GRAMS_PER_SECOND
+});
+const kettleStreamRenderer = createStreamRenderer(waterLiquidMaterial, KETTLE_STREAM_MAXIMUM_PARTICLES);
+const dripStreamRenderer = createStreamRenderer(coffeeLiquidMaterial, DRIP_STREAM_MAXIMUM_PARTICLES);
+const waterSplash = createSplashSystem(0xcfe9f7);
+const coffeeSplash = createSplashSystem(0x6b3a1c);
 
 /* ---------- 그라인더 ---------- */
 
@@ -1123,9 +1367,9 @@ function updatePaper(simulationSeconds) {
   colorAttribute.needsUpdate = true;
 }
 
+/* 서버의 커피 높이는 실제로 떨어져 닿은 커피 방울의 양으로 정합니다 */
 function updateServer() {
-  const beverageGrams = brewModel.state.beverageGrams;
-  const coffeeHeight = clamp(beverageGrams / SERVER_CAPACITY_GRAMS, 0, 1) * SERVER_INNER_HEIGHT;
+  const coffeeHeight = clamp(dripState.landedGrams / SERVER_CAPACITY_GRAMS, 0, 1) * SERVER_INNER_HEIGHT;
   serverCoffee.visible = coffeeHeight > 0.02;
   serverCoffee.scale.y = Math.max(0.001, coffeeHeight);
   serverCoffee.position.y = TABLE_HEIGHT + 0.3 + coffeeHeight / 2;
@@ -1343,21 +1587,16 @@ function handleShakePointer(event) {
   shakeState.travel += Math.abs(deltaX);
 }
 
-/* ---------- 주전자 ---------- */
+/* ---------- 주전자로 물 붓기 ---------- */
 
-function aimKettle(worldX, worldZ) {
-  pourState.aimX = worldX;
-  pourState.aimZ = worldZ;
-  const normalized = worldToNormalized(worldX, worldZ);
-  brewModel.setPourPosition(normalized.x, normalized.z);
-}
-
+/* 포인터는 주전자 몸통을 가리킵니다. 주전자 몸통 높이의 평면에 포인터를 비춰 몸통 위치로 씁니다 */
 function handleWaterPointer(event) {
   if (pourState.isAutomaticRunning) {
     return;
   }
-  if (projectPointerToHeight(event, currentWaterMeanY)) {
-    aimKettle(pointerWorld.x, pointerWorld.z);
+  if (projectPointerToHeight(event, KETTLE_BODY_HEIGHT)) {
+    pourState.kettleTargetX = pointerWorld.x;
+    pourState.kettleTargetZ = pointerWorld.z;
   }
 }
 
@@ -1368,6 +1607,29 @@ function setAutomaticPouring(isRunning) {
   } else {
     automaticPourButton.textContent = "레시피대로 자동 붓기";
   }
+}
+
+const spoutTipWorld = new THREE.Vector3();
+const spoutDirectionWorld = new THREE.Vector3();
+
+function computeSpoutExit() {
+  kettlePivot.updateMatrixWorld(true);
+  spoutTipWorld.copy(spoutTipLocal);
+  kettleModel.localToWorld(spoutTipWorld);
+  spoutDirectionWorld.copy(spoutDirectionLocal).transformDirection(kettleModel.matrixWorld);
+}
+
+/* 물줄기가 지금 자세에서 몸통 기준으로 얼마나 떨어진 곳에 닿는지 어림합니다(주둥이 위치 + 떨어지는 동안 옆으로 가는 거리) */
+function estimateLandingOffset(flowGramsPerSecond) {
+  const exitSpeed = kettleStream.exitSpeedFor(Math.max(flowGramsPerSecond, 0.5));
+  const fallHeight = Math.max(0.1, spoutTipWorld.y - currentWaterMeanY);
+  const downwardSpeed = -spoutDirectionWorld.y * exitSpeed;
+  const fallSeconds =
+    (-downwardSpeed + Math.sqrt(downwardSpeed * downwardSpeed + 2 * StreamPhysics.gravity * fallHeight)) / StreamPhysics.gravity;
+  return {
+    x: spoutTipWorld.x - kettlePivot.position.x + spoutDirectionWorld.x * exitSpeed * fallSeconds,
+    z: spoutTipWorld.z - kettlePivot.position.z + spoutDirectionWorld.z * exitSpeed * fallSeconds
+  };
 }
 
 /* 레시피 시간표대로 나선을 그리며 붓습니다. 지금 물을 부어야 하면 true를 돌려줍니다 */
@@ -1383,100 +1645,203 @@ function runAutomaticPouring(simulationSeconds) {
     }
   });
 
-  /* 가운데에서 바깥으로 갔다가 돌아오는 나선을 그립니다. 필터 종이에는 닿지 않게 합니다 */
+  /* 가운데에서 바깥으로 갔다가 돌아오는 나선을 그리도록, 물이 닿을 곳에서 거꾸로 주전자 위치를 정합니다 */
   pourState.automaticAngle += AUTOMATIC_POUR_ANGULAR_SPEED * simulationSeconds;
-  const maximumRadius = isBloomStep ? 0.7 : 0.6;
+  const maximumRadius = isBloomStep ? 0.65 : 0.55;
   const radiusFraction = 0.12 + (maximumRadius - 0.12) * (0.5 - 0.5 * Math.cos(pourState.automaticAngle * 0.25));
-  aimKettle(
-    Math.cos(pourState.automaticAngle) * radiusFraction * currentBedWorldRadius,
-    Math.sin(pourState.automaticAngle) * radiusFraction * currentBedWorldRadius
-  );
+  const landingX = Math.cos(pourState.automaticAngle) * radiusFraction * currentBedWorldRadius;
+  const landingZ = Math.sin(pourState.automaticAngle) * radiusFraction * currentBedWorldRadius;
+  const landingOffset = estimateLandingOffset(FluidBrewModel.pourRates[selectedPourRate]);
+  pourState.kettleTargetX = landingX - landingOffset.x;
+  pourState.kettleTargetZ = landingZ - landingOffset.z;
 
   const finalGrams = schedule[schedule.length - 1].cumulativeGrams;
-  if (brewModel.state.totalPouredGrams >= finalGrams - 0.05) {
+  const pouredIncludingFlight = brewModel.state.totalPouredGrams + waterInFlightGrams();
+  if (pouredIncludingFlight >= finalGrams - 0.05) {
     setAutomaticPouring(false);
     return false;
   }
-  return brewModel.state.totalPouredGrams < targetGrams - 0.05;
+  return pouredIncludingFlight < targetGrams - 0.05;
 }
 
-function updateWater(simulationSeconds) {
-  let shouldPour = false;
-  if (pourState.isAutomaticRunning) {
-    shouldPour = runAutomaticPouring(simulationSeconds);
-  } else if (selectedTool === "water") {
-    shouldPour = pourState.isPointerPouring || pourState.isKeyboardPouring;
-  }
-
-  if (shouldPour && !brewModel.state.isPouring) {
-    brewModel.startPouring();
-    lockSettings();
-  } else if (!shouldPour && brewModel.state.isPouring) {
-    brewModel.stopPouring();
-  }
-
-  if (brewModel.state.phase === "brewing") {
-    brewModel.advance(simulationSeconds, FluidBrewModel.pourRates[selectedPourRate]);
-    if (brewModel.state.elapsedSeconds >= pourState.nextTimelineSampleSecond) {
-      pourState.timelinePoints.push({ second: brewModel.state.elapsedSeconds, grams: brewModel.state.totalPouredGrams });
-      pourState.nextTimelineSampleSecond += TIMELINE_SAMPLE_SECONDS;
-    }
-    if (brewModel.state.isPouring) {
-      wetPaperWhereStreamHits(simulationSeconds);
+function waterInFlightGrams() {
+  let grams = 0;
+  for (let particleIndex = 0; particleIndex < kettleStream.maximumParticles; particleIndex += 1) {
+    if (kettleStream.isAlive[particleIndex]) {
+      grams += kettleStream.mass[particleIndex];
     }
   }
-}
-
-function isAimOnPaper() {
-  const aimRadius = Math.hypot(pourState.aimX - dripperGroup.position.x, pourState.aimZ - dripperGroup.position.z);
-  return aimRadius > coneRadiusAt(currentWaterMeanY) * 0.98;
-}
-
-/* 물줄기가 수면보다 바깥, 즉 필터 종이에 떨어지면 그 자리를 적십니다 */
-function wetPaperWhereStreamHits(simulationSeconds) {
-  if (!isAimOnPaper()) {
-    return;
-  }
-  const aimRadius = Math.hypot(pourState.aimX, pourState.aimZ);
-  const hitHeight = Math.min(PAPER_TOP_HEIGHT, coneHeightAtRadius(aimRadius));
-  let angle = Math.atan2(pourState.aimZ, pourState.aimX);
-  if (angle < 0) {
-    angle += FULL_TURN_RADIANS;
-  }
-  const pouredGrams = FluidBrewModel.pourRates[selectedPourRate] * simulationSeconds;
-  paperModel.addDirectHit(angle, hitHeight, pouredGrams * PAPER_DIRECT_HIT_WETNESS_PER_GRAM);
-}
-
-function streamLandingHeight() {
-  if (isAimOnPaper()) {
-    return Math.min(PAPER_TOP_HEIGHT, coneHeightAtRadius(Math.hypot(pourState.aimX, pourState.aimZ)));
-  }
-  return currentWaterMeanY;
+  return grams;
 }
 
 const kettleHeldTarget = new THREE.Vector3();
 
-function updateKettleAndStream() {
+function updateKettlePose(deltaSeconds, wantsToPour) {
   const isHoldingKettle = (selectedTool === "water" || pourState.isAutomaticRunning) && !isBrewFinished();
   if (isHoldingKettle) {
-    kettleHeldTarget.set(pourState.aimX, KETTLE_TIP_HEIGHT, pourState.aimZ);
-    kettlePivot.position.lerp(kettleHeldTarget, 0.5);
+    kettleHeldTarget.set(pourState.kettleTargetX, KETTLE_BODY_HEIGHT, pourState.kettleTargetZ);
+    kettlePivot.position.lerp(kettleHeldTarget, 0.4);
   } else {
-    kettlePivot.position.lerp(KETTLE_PARKED_TIP, 0.15);
+    kettlePivot.position.lerp(KETTLE_PARKED_BODY, 0.15);
   }
-  const isPouring = brewModel.state.isPouring;
-  kettleTilt.rotation.z = THREE.MathUtils.lerp(kettleTilt.rotation.z, isPouring ? -0.32 : 0, 0.18);
 
-  if (isPouring) {
-    const landingY = streamLandingHeight();
-    const streamLength = Math.max(0.1, kettlePivot.position.y - landingY);
-    const streamRadius = POUR_STREAM_RADII[selectedPourRate];
-    pourStream.visible = true;
-    pourStream.scale.set(streamRadius, streamLength, streamRadius);
-    pourStream.position.set(kettlePivot.position.x, landingY + streamLength / 2, kettlePivot.position.z);
+  /* 누르고 있으면 주전자가 천천히 기울고, 어느 정도 기울어야 물이 나오기 시작합니다 */
+  const canPour = isHoldingKettle && wantsToPour;
+  const tiltChange = deltaSeconds / KETTLE_TILT_SECONDS;
+  if (canPour) {
+    pourState.tiltProgress = Math.min(1, pourState.tiltProgress + tiltChange);
   } else {
-    pourStream.visible = false;
+    pourState.tiltProgress = Math.max(0, pourState.tiltProgress - tiltChange);
   }
+  kettleTilt.rotation.z = -KETTLE_MAXIMUM_TILT_RADIANS[selectedPourRate] * pourState.tiltProgress;
+}
+
+function currentKettleFlow() {
+  const flowFraction = clamp((pourState.tiltProgress - KETTLE_FLOW_START_TILT) / (1 - KETTLE_FLOW_START_TILT), 0, 1);
+  return FluidBrewModel.pourRates[selectedPourRate] * flowFraction;
+}
+
+/* 물 입자가 어디에 닿았는지 판단합니다: 원두 층과 물, 필터 종이, 드리퍼 테두리, 작업대 */
+function landKettleParticle(particleIndex) {
+  const worldX = kettleStream.positionX[particleIndex];
+  const worldY = kettleStream.positionY[particleIndex];
+  const worldZ = kettleStream.positionZ[particleIndex];
+  const particleMass = kettleStream.mass[particleIndex];
+  const relativeX = worldX - dripperGroup.position.x;
+  const relativeZ = worldZ - dripperGroup.position.z;
+  const radius = Math.hypot(relativeX, relativeZ);
+
+  if (worldY > PAPER_TOP_HEIGHT) {
+    return false;
+  }
+  if (worldY <= TABLE_HEIGHT) {
+    brewModel.addSpilledWater(particleMass);
+    spawnSplash(waterSplash, worldX, TABLE_HEIGHT, worldZ, 3, 40);
+    return true;
+  }
+
+  if (radius < coneRadiusAt(Math.max(0, worldY))) {
+    const normalizedX = relativeX / currentBedWorldRadius;
+    const normalizedZ = relativeZ / currentBedWorldRadius;
+    if (normalizedX * normalizedX + normalizedZ * normalizedZ <= 1) {
+      const cellIndex = cellIndexAtNormalized(normalizedX, normalizedZ);
+      const surfaceY = bedWorldHeight(cellSnapshot.bedMillimeters[cellIndex]) + cellSnapshot.waterMillimeters[cellIndex] * WATER_MILLIMETER_TO_WORLD;
+      if (worldY <= surfaceY) {
+        brewModel.addWaterAt(normalizedX, normalizedZ, particleMass);
+        spawnSplash(waterSplash, worldX, surfaceY, worldZ, 1, 35);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /* 원뿔 안쪽에 있던 물이 벽을 넘었다면 필터 종이에 부딪힌 것입니다 */
+  if (worldY >= 0 && radius <= coneRadiusAt(PAPER_TOP_HEIGHT) + 0.25) {
+    let angle = Math.atan2(relativeZ, relativeX);
+    if (angle < 0) {
+      angle += FULL_TURN_RADIANS;
+    }
+    paperModel.addDirectHit(angle, worldY, particleMass * PAPER_DIRECT_HIT_WETNESS_PER_GRAM);
+    brewModel.addPaperWater(particleMass);
+    spawnSplash(waterSplash, worldX, worldY, worldZ, 1, 25);
+    return true;
+  }
+
+  /* 드리퍼 테두리에 떨어진 물은 바깥으로 흘러 작업대에 쏟아집니다 */
+  if (worldY <= CONE_HEIGHT && radius <= CONE_TOP_RADIUS + 1.8) {
+    brewModel.addSpilledWater(particleMass);
+    spawnSplash(waterSplash, worldX, CONE_HEIGHT, worldZ, 2, 35);
+    return true;
+  }
+  return false;
+}
+
+function updateWater(simulationSeconds, deltaSeconds) {
+  let wantsToPour = false;
+  if (pourState.isAutomaticRunning) {
+    wantsToPour = runAutomaticPouring(simulationSeconds);
+  } else if (selectedTool === "water") {
+    wantsToPour = pourState.isPointerPouring || pourState.isKeyboardPouring;
+  }
+  if (isBrewFinished()) {
+    wantsToPour = false;
+  }
+  updateKettlePose(deltaSeconds, wantsToPour);
+
+  const flowGramsPerSecond = currentKettleFlow();
+  if (flowGramsPerSecond > 0 && !brewModel.state.isPouring && !isBrewFinished()) {
+    brewModel.startPouring();
+    lockSettings();
+  } else if (flowGramsPerSecond <= 0 && brewModel.state.isPouring) {
+    brewModel.stopPouring();
+  }
+
+  computeSpoutExit();
+  kettleStream.emit(simulationSeconds, spoutTipWorld, spoutDirectionWorld, flowGramsPerSecond);
+  kettleStream.step(simulationSeconds, landKettleParticle);
+  updateSplashSystem(waterSplash, simulationSeconds);
+
+  if (brewModel.state.phase === "brewing") {
+    brewModel.advance(simulationSeconds, 0);
+    if (brewModel.state.elapsedSeconds >= pourState.nextTimelineSampleSecond) {
+      pourState.timelinePoints.push({ second: brewModel.state.elapsedSeconds, grams: brewModel.state.totalPouredGrams });
+      pourState.nextTimelineSampleSecond += TIMELINE_SAMPLE_SECONDS;
+    }
+  }
+
+  let attachPoint = null;
+  if (flowGramsPerSecond > 0) {
+    attachPoint = spoutTipWorld;
+  }
+  renderStream(kettleStreamRenderer, kettleStream, attachPoint, null);
+}
+
+/* ---------- 드리퍼 아래로 떨어지는 커피 ---------- */
+
+const dripOutlet = new THREE.Vector3();
+const dripDirection = new THREE.Vector3(0, -1, 0);
+const hangingDropDescription = { x: 0, y: 0, z: 0, radius: 0 };
+
+function serverSurfaceHeight() {
+  const coffeeHeight = clamp(dripState.landedGrams / SERVER_CAPACITY_GRAMS, 0, 1) * SERVER_INNER_HEIGHT;
+  return TABLE_HEIGHT + 0.3 + coffeeHeight;
+}
+
+function landDripParticle(particleIndex) {
+  const worldY = dripStream.positionY[particleIndex];
+  const surfaceY = serverSurfaceHeight();
+  if (worldY > surfaceY) {
+    return false;
+  }
+  dripState.landedGrams += dripStream.mass[particleIndex];
+  spawnSplash(coffeeSplash, dripStream.positionX[particleIndex], surfaceY, dripStream.positionZ[particleIndex], 2, 30);
+  return true;
+}
+
+/* 원두 층을 빠져나온 커피(모델이 계산한 양)를 드리퍼 바닥 구멍에서 내보냅니다 */
+function updateDrip(simulationSeconds) {
+  const beverageGrams = brewModel.state.beverageGrams;
+  const newGrams = Math.max(0, beverageGrams - dripState.emittedGrams);
+  dripState.emittedGrams = beverageGrams;
+  let flowGramsPerSecond = 0;
+  if (simulationSeconds > 0) {
+    flowGramsPerSecond = newGrams / simulationSeconds;
+  }
+
+  dripOutlet.set(dripperGroup.position.x, DRIPPER_OUTLET_HEIGHT, dripperGroup.position.z);
+  dripStream.emit(simulationSeconds, dripOutlet, dripDirection, flowGramsPerSecond);
+  dripStream.step(simulationSeconds, landDripParticle);
+  updateSplashSystem(coffeeSplash, simulationSeconds);
+
+  hangingDropDescription.x = dripOutlet.x;
+  hangingDropDescription.y = dripOutlet.y;
+  hangingDropDescription.z = dripOutlet.z;
+  hangingDropDescription.radius = dripStream.dropRadiusFor(dripStream.getHangingDropGrams()) * STREAM_VISUAL_SCALE;
+  let attachPoint = null;
+  if (dripStream.isJetting()) {
+    attachPoint = dripOutlet;
+  }
+  renderStream(dripStreamRenderer, dripStream, attachPoint, hangingDropDescription);
 }
 
 /* ---------- 작업대 초기화와 결과 ---------- */
@@ -1505,6 +1870,13 @@ function resetWorkbench() {
   pourState.nextTimelineSampleSecond = TIMELINE_SAMPLE_SECONDS;
   setAutomaticPouring(false);
   clearFallingParticles();
+  kettleStream.reset();
+  dripStream.reset();
+  clearSplashSystem(waterSplash);
+  clearSplashSystem(coffeeSplash);
+  dripState.emittedGrams = 0;
+  dripState.landedGrams = 0;
+  pourState.tiltProgress = 0;
 
   isHeatmapVisible = false;
   lastResult = null;
@@ -1779,6 +2151,9 @@ function buildAdvice(result, settings) {
     adviceList.push("추출이 4분을 넘었습니다. 분쇄가 너무 가늘거나 고운 가루가 많아 물이 잘 빠지지 않았습니다.");
   } else if (result.contactSeconds < 110) {
     adviceList.push("2분이 안 돼서 끝났습니다. 물을 더 천천히, 여러 번에 나눠 부어 보세요.");
+  }
+  if (result.spilledGrams > 5) {
+    adviceList.push("물 " + Math.round(result.spilledGrams) + "g이 드리퍼 밖으로 쏟아졌습니다. 주둥이가 드리퍼 안쪽을 향하도록 주전자를 조금 더 안으로 옮겨 주세요.");
   }
   if (result.leftoverWaterGrams > 5) {
     adviceList.push("드리퍼에 물이 " + Math.round(result.leftoverWaterGrams) + "g 남은 채로 끝냈습니다.");
@@ -2287,10 +2662,9 @@ function animationFrame(timestamp) {
   shakeState.dripperJiggle *= Math.pow(0.02, deltaSeconds);
   dripperGroup.position.x = shakeState.dripperJiggle;
 
-  if (!isBrewFinished()) {
-    updateWater(simulationSeconds);
-  }
-  updateKettleAndStream();
+  /* 추출이 끝난 뒤에도 공중에 있던 물방울과 드리퍼에 남은 커피 방울은 마저 떨어집니다 */
+  updateWater(simulationSeconds, deltaSeconds);
+  updateDrip(simulationSeconds);
   updateFallingParticles(deltaSeconds);
   updateBedAndWaterMeshes();
   updatePaper(isBrewFinished() ? deltaSeconds : simulationSeconds);
@@ -2298,7 +2672,7 @@ function animationFrame(timestamp) {
 
   if (!isBrewFinished()) {
     finishButton.disabled = brewModel.state.totalPouredGrams <= 0;
-    if (brewModel.isNaturallyComplete()) {
+    if (brewModel.isNaturallyComplete() && kettleStream.getAliveCount() === 0) {
       completeBrew();
     }
   }
@@ -2345,6 +2719,17 @@ CoffeeSession.simulatorDebug = {
   },
   getJarState: function getJarState() {
     return jarState;
+  },
+  getStreamState: function getStreamState() {
+    return {
+      kettleParticles: kettleStream.getAliveCount(),
+      dripParticles: dripStream.getAliveCount(),
+      hangingDropGrams: dripStream.getHangingDropGrams(),
+      serverLandedGrams: dripState.landedGrams,
+      kettleTilt: pourState.tiltProgress,
+      kettleBody: kettlePivot.position.toArray(),
+      spoutTip: spoutTipWorld.toArray()
+    };
   },
   getPaperWetness: function getPaperWetness(angleIndex, rowIndex) {
     return paperModel.readWetness(angleIndex, rowIndex);

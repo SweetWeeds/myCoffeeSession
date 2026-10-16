@@ -87,6 +87,13 @@ const SHAKE_MINIMUM_TRAVEL = 0.5;
 const KETTLE_BODY_HEIGHT = 11;
 const KETTLE_PARKED_BODY = new THREE.Vector3(10, TABLE_HEIGHT + 1.7, 5);
 const KETTLE_TILT_SECONDS = 0.35;
+/* 주전자는 손으로 옮기는 정도의 속도로만 포인터를 따라갑니다 */
+const KETTLE_MAXIMUM_SPEED_CENTIMETERS_PER_SECOND = 40;
+const KETTLE_FOLLOW_STIFFNESS_PER_SECOND = 12;
+/* 물이 부딪히는 주전자 몸통의 크기(모델 기준 반지름과 위아래 범위) */
+const KETTLE_BODY_COLLISION_RADIUS = 2.25;
+const KETTLE_BODY_COLLISION_BOTTOM = -1.7;
+const KETTLE_BODY_COLLISION_TOP = 2.2;
 const KETTLE_FLOW_START_TILT = 0.45;
 const KETTLE_MAXIMUM_TILT_RADIANS = { gentle: 0.3, normal: 0.4, strong: 0.52 };
 /* 드립 주전자 주둥이 구멍 반지름(지름 약 4.4mm). 물이 나오는 속도와 처음 물줄기 굵기를 정합니다 */
@@ -1806,6 +1813,7 @@ const spoutDirectionWorld = new THREE.Vector3();
 
 function computeSpoutExit() {
   kettlePivot.updateMatrixWorld(true);
+  kettleInverseMatrix.copy(kettleModel.matrixWorld).invert();
   spoutTipWorld.copy(spoutTipLocal);
   kettleModel.localToWorld(spoutTipWorld);
   spoutDirectionWorld.copy(spoutDirectionLocal).transformDirection(kettleModel.matrixWorld);
@@ -1867,12 +1875,29 @@ function waterInFlightGrams() {
 }
 
 const kettleHeldTarget = new THREE.Vector3();
+const kettleMove = new THREE.Vector3();
+
+/* 목표 위치로 부드럽게 다가가되, 한 프레임에 너무 멀리 뛰지 않게 속도를 제한합니다 */
+function moveKettleToward(target, deltaSeconds) {
+  kettleMove.subVectors(target, kettlePivot.position);
+  kettleMove.multiplyScalar(Math.min(1, KETTLE_FOLLOW_STIFFNESS_PER_SECOND * deltaSeconds));
+  const maximumStep = KETTLE_MAXIMUM_SPEED_CENTIMETERS_PER_SECOND * deltaSeconds;
+  if (kettleMove.length() > maximumStep) {
+    kettleMove.setLength(maximumStep);
+  }
+  kettlePivot.position.add(kettleMove);
+}
 
 function updateKettlePose(deltaSeconds, wantsToPour) {
   const isHoldingKettle = (selectedTool === "water" || pourState.isAutomaticRunning) && !isBrewFinished();
   if (isHoldingKettle) {
     kettleHeldTarget.set(pourState.kettleTargetX, KETTLE_BODY_HEIGHT, pourState.kettleTargetZ);
-    kettlePivot.position.lerp(kettleHeldTarget, 0.4);
+    /* 작업대에서 들어 올릴 때는 빨리, 들고 있을 때는 손 속도로 움직입니다 */
+    if (kettlePivot.position.y < KETTLE_BODY_HEIGHT - 1) {
+      kettlePivot.position.lerp(kettleHeldTarget, 0.2);
+    } else {
+      moveKettleToward(kettleHeldTarget, deltaSeconds);
+    }
   } else {
     kettlePivot.position.lerp(KETTLE_PARKED_BODY, 0.15);
   }
@@ -1894,7 +1919,59 @@ function currentKettleFlow() {
 }
 
 /* 물 입자가 어디에 닿았는지 판단합니다: 원두 층과 물, 필터 종이, 드리퍼 테두리, 작업대 */
+const kettleInverseMatrix = new THREE.Matrix4();
+const particleLocalPosition = new THREE.Vector3();
+const particleWorldVelocity = new THREE.Vector3();
+const kettleSurfaceNormal = new THREE.Vector3();
+const kettleWorldQuaternion = new THREE.Quaternion();
+
+/* 물 입자가 주전자 몸통 안으로 들어가면 표면 밖으로 밀어내고, 몸통 쪽으로 향하던 속도는 없앱니다.
+   부딪힌 물은 몸통 표면을 타고 흘러내리다 아래로 떨어집니다 */
+function keepParticleOutsideKettle(particleIndex) {
+  particleLocalPosition.set(
+    kettleStream.positionX[particleIndex],
+    kettleStream.positionY[particleIndex],
+    kettleStream.positionZ[particleIndex]
+  ).applyMatrix4(kettleInverseMatrix);
+  const localRadius = Math.hypot(particleLocalPosition.x, particleLocalPosition.z);
+  const isInsideBody =
+    localRadius < KETTLE_BODY_COLLISION_RADIUS &&
+    particleLocalPosition.y > KETTLE_BODY_COLLISION_BOTTOM &&
+    particleLocalPosition.y < KETTLE_BODY_COLLISION_TOP;
+  if (!isInsideBody) {
+    return;
+  }
+  const radialScale = KETTLE_BODY_COLLISION_RADIUS / Math.max(localRadius, 1e-4);
+  if (localRadius < 1e-4) {
+    particleLocalPosition.x = KETTLE_BODY_COLLISION_RADIUS;
+  } else {
+    particleLocalPosition.x *= radialScale;
+    particleLocalPosition.z *= radialScale;
+  }
+  kettleSurfaceNormal.set(particleLocalPosition.x, 0, particleLocalPosition.z).normalize();
+  particleLocalPosition.applyMatrix4(kettleModel.matrixWorld);
+  kettleStream.positionX[particleIndex] = particleLocalPosition.x;
+  kettleStream.positionY[particleIndex] = particleLocalPosition.y;
+  kettleStream.positionZ[particleIndex] = particleLocalPosition.z;
+
+  kettleModel.getWorldQuaternion(kettleWorldQuaternion);
+  kettleSurfaceNormal.applyQuaternion(kettleWorldQuaternion);
+  particleWorldVelocity.set(
+    kettleStream.velocityX[particleIndex],
+    kettleStream.velocityY[particleIndex],
+    kettleStream.velocityZ[particleIndex]
+  );
+  const inwardSpeed = particleWorldVelocity.dot(kettleSurfaceNormal);
+  if (inwardSpeed < 0) {
+    particleWorldVelocity.addScaledVector(kettleSurfaceNormal, -inwardSpeed);
+  }
+  kettleStream.velocityX[particleIndex] = particleWorldVelocity.x;
+  kettleStream.velocityY[particleIndex] = particleWorldVelocity.y;
+  kettleStream.velocityZ[particleIndex] = particleWorldVelocity.z;
+}
+
 function landKettleParticle(particleIndex) {
+  keepParticleOutsideKettle(particleIndex);
   const worldX = kettleStream.positionX[particleIndex];
   const worldY = kettleStream.positionY[particleIndex];
   const worldZ = kettleStream.positionZ[particleIndex];
@@ -2923,6 +3000,21 @@ CoffeeSession.simulatorDebug = {
   },
   getJarState: function getJarState() {
     return jarState;
+  },
+  countWaterInsideKettle: function countWaterInsideKettle() {
+    let insideCount = 0;
+    const inverse = new THREE.Matrix4().copy(kettleModel.matrixWorld).invert();
+    const localPoint = new THREE.Vector3();
+    for (let particleIndex = 0; particleIndex < kettleStream.maximumParticles; particleIndex += 1) {
+      if (!kettleStream.isAlive[particleIndex]) {
+        continue;
+      }
+      localPoint.set(kettleStream.positionX[particleIndex], kettleStream.positionY[particleIndex], kettleStream.positionZ[particleIndex]).applyMatrix4(inverse);
+      if (Math.hypot(localPoint.x, localPoint.z) < KETTLE_BODY_COLLISION_RADIUS - 0.05 && localPoint.y > KETTLE_BODY_COLLISION_BOTTOM + 0.05 && localPoint.y < KETTLE_BODY_COLLISION_TOP - 0.05) {
+        insideCount += 1;
+      }
+    }
+    return insideCount;
   },
   getStreamRenderStats: function getStreamRenderStats() {
     return {

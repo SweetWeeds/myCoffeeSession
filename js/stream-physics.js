@@ -32,6 +32,8 @@
   /* 물방울이 출구에서 떨어지는 무게. 지름 6mm 출구에서 물일 때 대략 이 정도입니다 */
   const DEFAULT_DROP_DETACH_GRAMS = 0.12;
   const MERGE_LOOKBACK_COUNT = 12;
+  /* 사람이 주전자를 옮기는 속도는 빨라야 초속 수십 cm라서, 물이 물려받는 속도도 이 정도로 제한합니다 */
+  const DEFAULT_MAXIMUM_INHERITED_SPEED = 30;
   /* 출렁임이 이만큼 자라면 한 파장 안의 물이 다 모였다고 보고 독립된 물방울로 다룹니다 */
   const DROP_SETTLED_AMPLITUDE = 1.6;
 
@@ -41,6 +43,7 @@
     const outletArea = Math.PI * outletRadiusCentimeters * outletRadiusCentimeters;
     const jetThresholdGramsPerSecond = options.jetThresholdGramsPerSecond;
     const dropDetachGrams = options.dropDetachGrams || DEFAULT_DROP_DETACH_GRAMS;
+    const maximumInheritedSpeed = options.maximumInheritedSpeed || DEFAULT_MAXIMUM_INHERITED_SPEED;
 
     const positionX = new Float32Array(maximumParticles);
     const positionY = new Float32Array(maximumParticles);
@@ -314,6 +317,13 @@
         y: deltaSeconds > 0 ? (origin.y - previousOrigin.y) / deltaSeconds : 0,
         z: deltaSeconds > 0 ? (origin.z - previousOrigin.z) / deltaSeconds : 0
       };
+      const originSpeed = Math.sqrt(originVelocity.x * originVelocity.x + originVelocity.y * originVelocity.y + originVelocity.z * originVelocity.z);
+      if (originSpeed > maximumInheritedSpeed) {
+        const speedScale = maximumInheritedSpeed / originSpeed;
+        originVelocity.x *= speedScale;
+        originVelocity.y *= speedScale;
+        originVelocity.z *= speedScale;
+      }
       for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
         const fraction = (stepIndex + 1) / stepCount;
         const originX = previousOrigin.x + (origin.x - previousOrigin.x) * fraction;

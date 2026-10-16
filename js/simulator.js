@@ -1902,8 +1902,10 @@ function updateKettlePose(deltaSeconds, wantsToPour) {
     kettlePivot.position.lerp(KETTLE_PARKED_BODY, 0.15);
   }
 
-  /* 누르고 있으면 주전자가 천천히 기울고, 어느 정도 기울어야 물이 나오기 시작합니다 */
-  const canPour = isHoldingKettle && wantsToPour;
+  /* 누르고 있으면 주전자가 천천히 기울고, 어느 정도 기울어야 물이 나오기 시작합니다.
+     작업대에서 들어 올리는 중에는 기울이지 않아, 올라가는 속도를 물이 물려받아 위로 튀는 일이 없게 합니다 */
+  const isLiftedToHoldingHeight = kettlePivot.position.y > KETTLE_BODY_HEIGHT - 0.3;
+  const canPour = isHoldingKettle && wantsToPour && isLiftedToHoldingHeight;
   const tiltChange = deltaSeconds / KETTLE_TILT_SECONDS;
   if (canPour) {
     pourState.tiltProgress = Math.min(1, pourState.tiltProgress + tiltChange);
@@ -3000,6 +3002,15 @@ CoffeeSession.simulatorDebug = {
   },
   getJarState: function getJarState() {
     return jarState;
+  },
+  getHighestWaterAboveSpout: function getHighestWaterAboveSpout() {
+    let highest = -Infinity;
+    for (let particleIndex = 0; particleIndex < kettleStream.maximumParticles; particleIndex += 1) {
+      if (kettleStream.isAlive[particleIndex]) {
+        highest = Math.max(highest, kettleStream.positionY[particleIndex] - spoutTipWorld.y);
+      }
+    }
+    return highest;
   },
   countWaterInsideKettle: function countWaterInsideKettle() {
     let insideCount = 0;

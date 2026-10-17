@@ -3,6 +3,8 @@
 
 (function setUpCommonLayout() {
   const THEME_STORAGE_KEY = "coffee-session-theme";
+  /* 배포할 때마다 바뀌는 판 번호. 화면 맨 아래에 보여 주어, 브라우저가 예전 파일을 쓰고 있는지 확인할 수 있게 합니다 */
+  const SITE_VERSION = "20261017a";
 
   const sitePages = [
     { file: "index.html", title: "홈", longTitle: "커피 세션 홈" },
@@ -162,7 +164,8 @@
   footer.className = "site-footer";
   footer.innerHTML =
     "<p>사내 커피 동호회 커피 세션<br>원두: Champ de Mars Coffee Roasting Lab</p>" +
-    "<p>시뮬레이터 수치는 이해를 돕기 위한 근사 모델이며 실제 측정값과 다를 수 있습니다.</p>";
+    "<p>시뮬레이터 수치는 이해를 돕기 위한 근사 모델이며 실제 측정값과 다를 수 있습니다.</p>" +
+    "<p>판 " + SITE_VERSION + "</p>";
   document.body.appendChild(footer);
 
   /* ---------- 퀴즈 ---------- */

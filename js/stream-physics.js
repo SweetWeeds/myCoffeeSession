@@ -34,6 +34,10 @@
   const MERGE_LOOKBACK_COUNT = 12;
   /* 사람이 주전자를 옮기는 속도는 빨라야 초속 수십 cm라서, 물이 물려받는 속도도 이 정도로 제한합니다 */
   const DEFAULT_MAXIMUM_INHERITED_SPEED = 30;
+  /* 출구에서 나온 물은 위로 솟구치지 않습니다. 주전자를 들어 올리는 속도는 물려받지 않습니다 */
+  const MAXIMUM_INHERITED_UPWARD_SPEED = 0;
+  /* 10cm 높이에서 떨어지는 데 0.15초면 충분하므로, 이보다 오래 공중에 있는 입자는 계산 오류로 보고 지웁니다 */
+  const MAXIMUM_PARTICLE_AGE_SECONDS = 3;
   /* 출렁임이 이만큼 자라면 한 파장 안의 물이 다 모였다고 보고 독립된 물방울로 다룹니다 */
   const DROP_SETTLED_AMPLITUDE = 1.6;
 
@@ -52,6 +56,7 @@
     const velocityY = new Float32Array(maximumParticles);
     const velocityZ = new Float32Array(maximumParticles);
     const mass = new Float32Array(maximumParticles);
+    const age = new Float32Array(maximumParticles);
     const flowAtEmission = new Float32Array(maximumParticles);
     /* 물줄기를 따라 잰 위치(출구에서 나온 순서대로 쌓인 길이). 출렁임의 위상을 정합니다 */
     const materialCoordinate = new Float32Array(maximumParticles);
@@ -124,6 +129,7 @@
       velocityY[particleIndex] = velocityValues.y;
       velocityZ[particleIndex] = velocityValues.z;
       mass[particleIndex] = particleMass;
+      age[particleIndex] = 0;
       flowAtEmission[particleIndex] = flowGramsPerSecond;
       streamIdentifier[particleIndex] = currentStreamIdentifier;
       isDrop[particleIndex] = isDetachedDrop ? 1 : 0;
@@ -287,6 +293,12 @@
         if (!isAlive[particleIndex]) {
           continue;
         }
+        age[particleIndex] += stepSeconds;
+        const isNumberValid = Number.isFinite(positionX[particleIndex]) && Number.isFinite(positionY[particleIndex]) && Number.isFinite(positionZ[particleIndex]);
+        if (age[particleIndex] > MAXIMUM_PARTICLE_AGE_SECONDS || !isNumberValid) {
+          killParticle(particleIndex);
+          continue;
+        }
         velocityY[particleIndex] -= GRAVITY_CENTIMETERS_PER_SECOND_SQUARED * stepSeconds;
         velocityX[particleIndex] *= dragFactor;
         velocityZ[particleIndex] *= dragFactor;
@@ -324,6 +336,7 @@
         originVelocity.y *= speedScale;
         originVelocity.z *= speedScale;
       }
+      originVelocity.y = Math.min(originVelocity.y, MAXIMUM_INHERITED_UPWARD_SPEED);
       for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
         const fraction = (stepIndex + 1) / stepCount;
         const originX = previousOrigin.x + (origin.x - previousOrigin.x) * fraction;
@@ -373,6 +386,7 @@
       velocityY: velocityY,
       velocityZ: velocityZ,
       mass: mass,
+      age: age,
       amplitude: amplitude,
       materialCoordinate: materialCoordinate,
       wavelength: wavelength,

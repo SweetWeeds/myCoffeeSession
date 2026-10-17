@@ -115,6 +115,9 @@ const STREAM_VISUAL_SCALE = 1.25;
 const STREAM_TUBE_MAXIMUM_POINTS = 90;
 const STREAM_TUBE_SUBDIVISIONS = 5;
 const STREAM_TUBE_SIDES = 12;
+/* 물줄기로 이어 그리는 이웃 입자 사이의 최대 거리. 실제 물줄기에서 이웃 입자는 1cm 안쪽에 있으므로,
+   이보다 멀리 떨어진 입자는 이어진 물줄기가 아니라 따로 떨어지는 물방울로 그립니다 */
+const STREAM_MAXIMUM_LINK_CENTIMETERS = 1.5;
 const RIPPLE_COUNT = 24;
 const RIPPLE_SPAWN_INTERVAL_SECONDS = 0.05;
 const RIPPLE_LIFETIME_SECONDS = 0.7;
@@ -944,6 +947,7 @@ function appendStreamRun(streamRenderer, pointCount, firstRing, indexCountBefore
 /* attachPoint: 물이 나오는 출구. 지금 흐르는 줄기는 출구까지 이어 그립니다.
    hangingDrop: 출구에 매달려 자라는 물방울 { x, y, z, radius } */
 function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
+  streamRenderer.longestLink = 0;
   let ringsUsed = 0;
   let indexCount = 0;
   let particleIndex = simulation.getNewestIndex();
@@ -957,6 +961,7 @@ function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
     }
     const runStream = simulation.streamIdentifier[particleIndex];
     let pointCount = 0;
+    let lastAddedIndex = particleIndex;
     const isAttachedRun = attachPoint && runStream === currentStream && visited === 0;
     if (isAttachedRun) {
       runPointsX[0] = attachPoint.x;
@@ -974,6 +979,17 @@ function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
       simulation.isIntactStream(particleIndex) &&
       simulation.streamIdentifier[particleIndex] === runStream
     ) {
+      if (pointCount > 0) {
+        const linkDistance = Math.hypot(
+          simulation.positionX[particleIndex] - runPointsX[pointCount - 1],
+          simulation.positionY[particleIndex] - runPointsY[pointCount - 1],
+          simulation.positionZ[particleIndex] - runPointsZ[pointCount - 1]
+        );
+        streamRenderer.longestLink = Math.max(streamRenderer.longestLink, Math.min(linkDistance, STREAM_MAXIMUM_LINK_CENTIMETERS));
+        if (linkDistance > STREAM_MAXIMUM_LINK_CENTIMETERS) {
+          break;
+        }
+      }
       streamRenderer.isInTube[particleIndex] = 1;
       runPointsX[pointCount] = simulation.positionX[particleIndex];
       runPointsY[pointCount] = simulation.positionY[particleIndex];
@@ -982,6 +998,7 @@ function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
       runCoordinate[pointCount] = simulation.materialCoordinate[particleIndex];
       runAmplitude[pointCount] = simulation.amplitude[particleIndex];
       runWavelength[pointCount] = simulation.wavelength[particleIndex];
+      lastAddedIndex = particleIndex;
       pointCount += 1;
       visited += 1;
       particleIndex = (particleIndex + simulation.maximumParticles - 1) % simulation.maximumParticles;
@@ -992,7 +1009,7 @@ function renderStream(streamRenderer, simulation, attachPoint, hangingDrop) {
       indexCount = appended.indexCount;
     } else if (pointCount === 1 && !isAttachedRun) {
       /* 혼자 남은 조각은 물방울로 그립니다 */
-      streamRenderer.isInTube[(particleIndex + 1) % simulation.maximumParticles] = 0;
+      streamRenderer.isInTube[lastAddedIndex] = 0;
     }
   }
 
@@ -3028,7 +3045,15 @@ CoffeeSession.simulatorDebug = {
     return insideCount;
   },
   getStreamRenderStats: function getStreamRenderStats() {
+    let oldestKettleParticleSeconds = 0;
+    for (let particleIndex = 0; particleIndex < kettleStream.maximumParticles; particleIndex += 1) {
+      if (kettleStream.isAlive[particleIndex]) {
+        oldestKettleParticleSeconds = Math.max(oldestKettleParticleSeconds, kettleStream.age[particleIndex]);
+      }
+    }
     return {
+      kettleLongestLink: kettleStreamRenderer.longestLink,
+      oldestKettleParticleSeconds: oldestKettleParticleSeconds,
       kettleTubeIndexes: kettleStreamRenderer.tubeGeometry.drawRange.count,
       kettleDrops: kettleStreamRenderer.dropMesh.count,
       dripTubeIndexes: dripStreamRenderer.tubeGeometry.drawRange.count,

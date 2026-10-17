@@ -32,18 +32,30 @@ const TEXT_REFRESH_FRAME_INTERVAL = 6;
 
 /* 작업대 배치 (단위는 대략 cm) */
 const TABLE_HEIGHT = -7.4;
-const CONE_BOTTOM_RADIUS = 0.7;
-const CONE_TOP_RADIUS = 6.0;
-const CONE_HEIGHT = 7.2;
-const PAPER_TOP_HEIGHT = 7.9;
+/* 드리퍼 안쪽(종이가 닿는 면)은 하리오 V60처럼 꼭지각 60도의 원뿔입니다. 크기는 V60 02(1–4잔)를 참고했습니다 */
+const CONE_HALF_ANGLE_RADIANS = Math.PI / 6;
+const CONE_BOTTOM_RADIUS = 0.65;
+const CONE_TOP_RADIUS = 5.2;
+const CONE_HEIGHT = (CONE_TOP_RADIUS - CONE_BOTTOM_RADIUS) / Math.tan(CONE_HALF_ANGLE_RADIANS);
+/* V60 거름종이는 드리퍼 테두리보다 1cm쯤 위로 올라옵니다 */
+const PAPER_TOP_HEIGHT = CONE_HEIGHT + 0.8;
 const BED_FLOOR_Y = 1.4;
 const BED_MILLIMETER_TO_WORLD = 0.08;
 const WATER_MILLIMETER_TO_WORLD = 0.04;
 const HIDDEN_WATER_THRESHOLD_MILLIMETERS = 0.05;
-const SERVER_CAPACITY_GRAMS = 400;
-const SERVER_INNER_HEIGHT = 5.4;
-/* 주전자를 들었을 때(높이 11)부터 서버 바닥까지 한 화면에 들어오도록 드리퍼보다 조금 위를 바라봅니다 */
-const DRIPPER_FOCUS = new THREE.Vector3(0, 4.5, 0);
+/* 드리퍼 바깥 모양: 도자기 벽, 아래쪽 짧은 목, 서버 위에 얹히는 둥근 받침 */
+const DRIPPER_INNER_SURFACE_GAP = 0.15;
+const DRIPPER_WALL_THICKNESS = 0.45;
+const DRIPPER_NECK_RADIUS = 1.75;
+const DRIPPER_BASE_RADIUS = 4.5;
+const DRIPPER_BASE_TOP_Y = -0.55;
+const DRIPPER_BASE_BOTTOM_Y = -1.0;
+/* 유리 서버: 받침 바로 아래에 입구가 오고, 저울 위에 놓입니다. 커피 1g은 약 1cm³로 봅니다 */
+const SERVER_TOP_Y = DRIPPER_BASE_BOTTOM_Y;
+const SERVER_INNER_RADIUS = 4.42;
+const SERVER_INNER_BOTTOM_Y = TABLE_HEIGHT + 0.85;
+/* 주전자를 들었을 때(뚜껑 꼭대기 약 14)부터 서버 바닥(약 -7)까지 한 화면에 들어오도록 그 사이를 바라봅니다 */
+const DRIPPER_FOCUS = new THREE.Vector3(0, 3.0, 0);
 
 /* 그라인더: 아래는 유리 가루 통, 가운데는 날이 든 몸통, 위는 원두가 보이는 유리 호퍼 */
 const GRINDER_POSITION = new THREE.Vector3(-12, 0, -1);
@@ -84,7 +96,8 @@ const SHAKE_MINIMUM_TRAVEL = 0.5;
 
 /* 주전자와 물 */
 /* 주전자 몸통 가운데 높이. 몸통 아랫면이 드리퍼 테두리보다 조금 위에 오도록 잡았습니다 */
-const KETTLE_BODY_HEIGHT = 11;
+/* 주전자를 들었을 때 몸통 높이. 기울여도 주둥이가 거름종이 윗선보다 1cm 넘게 위에 있도록 정했습니다 */
+const KETTLE_BODY_HEIGHT = 11.8;
 const KETTLE_PARKED_BODY = new THREE.Vector3(10, TABLE_HEIGHT + 1.7, 5);
 const KETTLE_TILT_SECONDS = 0.35;
 /* 주전자는 손으로 옮기는 정도의 속도로만 포인터를 따라갑니다 */
@@ -106,6 +119,7 @@ const KETTLE_STREAM_MAXIMUM_PARTICLES = 900;
 const BUBBLE_COUNT = 320;
 const AUTOMATIC_POUR_ANGULAR_SPEED = 2.6;
 const PAPER_DIRECT_HIT_WETNESS_PER_GRAM = 0.08;
+const PAPER_HIT_SHELL_CENTIMETERS = 0.3;
 
 /* 드리퍼 바닥 구멍과 그 아래로 떨어지는 커피 */
 const DRIPPER_OUTLET_HEIGHT = -0.45;
@@ -155,9 +169,9 @@ const PAPER_CONTACT_SAMPLE_RADIUS = 0.92;
 const PAPER_WETNESS_FOR_FULL_DARKENING = 0.4;
 
 const CAMERA_OFFSETS = {
-  angled: new THREE.Vector3(0, 17, 21.5),
-  top: new THREE.Vector3(0, 27, 0.01),
-  side: new THREE.Vector3(0, 3, 28)
+  angled: new THREE.Vector3(0, 19, 24.5),
+  top: new THREE.Vector3(0, 29, 0.01),
+  side: new THREE.Vector3(0, 3.5, 33)
 };
 const CAMERA_ANIMATION_SECONDS = 0.6;
 
@@ -576,33 +590,136 @@ const glassMaterial = new THREE.MeshStandardMaterial({
 const dripperGroup = new THREE.Group();
 scene.add(dripperGroup);
 
-function createConeLathe(bottomRadius, bottomHeight, topRadius, topHeight) {
-  const profilePoints = [];
-  const profileSegments = 24;
-  for (let segmentIndex = 0; segmentIndex <= profileSegments; segmentIndex += 1) {
-    const fraction = segmentIndex / profileSegments;
-    profilePoints.push(
-      new THREE.Vector2(bottomRadius + (topRadius - bottomRadius) * fraction, bottomHeight + (topHeight - bottomHeight) * fraction)
-    );
-  }
-  return new THREE.LatheGeometry(profilePoints, 96);
+/* ---------- 드리퍼 (하리오 V60 모양 참고) ----------
+   안쪽: 꼭지각 60도 원뿔과 큰 구멍 하나. 바깥: 두께 있는 도자기 벽, 둥근 테두리,
+   아래쪽 짧은 목과 서버 위에 얹히는 둥근 받침, 옆에 손가락을 넣는 고리 손잡이.
+   안쪽 나선형 리브는 늘 거름종이에 가려 보이지 않아 그리지 않습니다 */
+const DRIPPER_RIM_RISE = 0.12;
+const DRIPPER_FOOT_INNER_RADIUS = 2.3;
+const DRIPPER_FOOT_RING_HEIGHT = 0.22;
+/* 모서리를 둥글게 깎는 크기 */
+const DRIPPER_EDGE_ROUNDING = 0.06;
+const DRIPPER_PROFILE_STEPS = 16;
+const DRIPPER_LATHE_SEGMENTS = 96;
+/* 손잡이: 테두리 바로 아래에서 시작해 바깥으로 나왔다가 아래쪽 몸통으로 돌아오는 D자 고리 */
+const DRIPPER_HANDLE_TOP_BELOW_RIM = 0.35;
+const DRIPPER_HANDLE_HEIGHT = 3.25;
+const DRIPPER_HANDLE_REACH = 2.3;
+const DRIPPER_HANDLE_BAND_WIDTH = 0.55;
+const DRIPPER_HANDLE_THICKNESS = 1.0;
+const DRIPPER_HANDLE_ANGLE_RADIANS = Math.PI;
+
+const dripperOuterWallOffset = DRIPPER_INNER_SURFACE_GAP + DRIPPER_WALL_THICKNESS / Math.cos(CONE_HALF_ANGLE_RADIANS);
+
+function dripperOuterConeRadiusAt(height) {
+  return coneRadiusAt(height) + dripperOuterWallOffset;
 }
 
-const ceramicMaterial = new THREE.MeshStandardMaterial({ color: COLORS.dripperCeramic, roughness: 0.35, side: THREE.DoubleSide });
-dripperGroup.add(new THREE.Mesh(createConeLathe(1.1, -0.4, CONE_TOP_RADIUS + 0.45, CONE_HEIGHT), ceramicMaterial));
+/* 드리퍼 바깥면의 반지름. 드리퍼 밖으로 떨어진 물이 도자기에 부딪혔는지 판단할 때도 씁니다 */
+function dripperOuterRadiusAt(height) {
+  if (height > CONE_HEIGHT + DRIPPER_RIM_RISE || height < DRIPPER_BASE_BOTTOM_Y) {
+    return 0;
+  }
+  if (height < DRIPPER_BASE_TOP_Y) {
+    return DRIPPER_BASE_RADIUS;
+  }
+  return Math.max(DRIPPER_NECK_RADIUS, dripperOuterConeRadiusAt(Math.min(height, CONE_HEIGHT)));
+}
 
-const flange = new THREE.Mesh(new THREE.RingGeometry(CONE_TOP_RADIUS + 0.3, CONE_TOP_RADIUS + 1.8, 72), ceramicMaterial);
-flange.rotation.x = -Math.PI / 2;
-flange.position.y = CONE_HEIGHT - 0.05;
-dripperGroup.add(flange);
+/* 드리퍼 단면(반지름, 높이)을 구멍 아래쪽에서 시작해 받침 → 목 → 바깥 벽 → 테두리 → 안쪽 벽 순서로 따라갑니다 */
+function createDripperLatheGeometry() {
+  const profile = [];
+  function addPoint(radius, height) {
+    profile.push(new THREE.Vector2(radius, height));
+  }
+  const holeRadius = CONE_BOTTOM_RADIUS + DRIPPER_INNER_SURFACE_GAP;
+  const baseMiddleY = (DRIPPER_BASE_TOP_Y + DRIPPER_BASE_BOTTOM_Y) / 2;
 
-const rimEdge = new THREE.Mesh(new THREE.TorusGeometry(CONE_TOP_RADIUS + 0.4, 0.14, 12, 96), ceramicMaterial);
-rimEdge.rotation.x = Math.PI / 2;
-rimEdge.position.y = CONE_HEIGHT;
-dripperGroup.add(rimEdge);
+  addPoint(holeRadius, DRIPPER_OUTLET_HEIGHT);
+  addPoint(DRIPPER_FOOT_INNER_RADIUS, DRIPPER_BASE_BOTTOM_Y + DRIPPER_FOOT_RING_HEIGHT);
+  addPoint(DRIPPER_FOOT_INNER_RADIUS, DRIPPER_BASE_BOTTOM_Y);
+  addPoint(DRIPPER_BASE_RADIUS - DRIPPER_EDGE_ROUNDING * 3, DRIPPER_BASE_BOTTOM_Y);
+  addPoint(DRIPPER_BASE_RADIUS - DRIPPER_EDGE_ROUNDING, DRIPPER_BASE_BOTTOM_Y + DRIPPER_EDGE_ROUNDING);
+  addPoint(DRIPPER_BASE_RADIUS, baseMiddleY);
+  addPoint(DRIPPER_BASE_RADIUS - DRIPPER_EDGE_ROUNDING, DRIPPER_BASE_TOP_Y - DRIPPER_EDGE_ROUNDING);
+  addPoint(DRIPPER_BASE_RADIUS - DRIPPER_EDGE_ROUNDING * 3, DRIPPER_BASE_TOP_Y);
+  addPoint(DRIPPER_NECK_RADIUS + DRIPPER_EDGE_ROUNDING * 3, DRIPPER_BASE_TOP_Y);
+  addPoint(DRIPPER_NECK_RADIUS + DRIPPER_EDGE_ROUNDING, DRIPPER_BASE_TOP_Y + DRIPPER_EDGE_ROUNDING);
 
-const dripperHandle = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.5, 1.4), ceramicMaterial);
-dripperHandle.position.set(CONE_TOP_RADIUS + 2.6, CONE_HEIGHT - 0.6, 0);
+  /* 목은 바깥 벽이 목 굵기까지 좁아지는 높이에서 원뿔과 만납니다 */
+  const neckTopHeight = coneHeightAtRadius(DRIPPER_NECK_RADIUS - dripperOuterWallOffset);
+  addPoint(DRIPPER_NECK_RADIUS, neckTopHeight);
+  for (let stepIndex = 1; stepIndex <= DRIPPER_PROFILE_STEPS; stepIndex += 1) {
+    const height = neckTopHeight + ((CONE_HEIGHT - neckTopHeight) * stepIndex) / DRIPPER_PROFILE_STEPS;
+    addPoint(dripperOuterConeRadiusAt(height), height);
+  }
+
+  /* 둥근 테두리 */
+  const rimOuterRadius = dripperOuterConeRadiusAt(CONE_HEIGHT);
+  const rimInnerRadius = CONE_TOP_RADIUS + DRIPPER_INNER_SURFACE_GAP;
+  addPoint(rimOuterRadius - DRIPPER_EDGE_ROUNDING, CONE_HEIGHT + DRIPPER_RIM_RISE * 0.7);
+  addPoint((rimOuterRadius + rimInnerRadius) / 2, CONE_HEIGHT + DRIPPER_RIM_RISE);
+  addPoint(rimInnerRadius + DRIPPER_EDGE_ROUNDING, CONE_HEIGHT + DRIPPER_RIM_RISE * 0.7);
+
+  for (let stepIndex = 0; stepIndex <= DRIPPER_PROFILE_STEPS; stepIndex += 1) {
+    const height = CONE_HEIGHT - (CONE_HEIGHT * stepIndex) / DRIPPER_PROFILE_STEPS;
+    addPoint(coneRadiusAt(height) + DRIPPER_INNER_SURFACE_GAP, height);
+  }
+  addPoint(holeRadius, DRIPPER_OUTLET_HEIGHT);
+  return new THREE.LatheGeometry(profile, DRIPPER_LATHE_SEGMENTS);
+}
+
+/* 손잡이 옆모습(바깥쪽 거리, 높이)을 그려 두께만큼 밀어냅니다. 몸통에 붙는 쪽은 비스듬한 바깥 벽을 따라갑니다 */
+function createDripperHandleGeometry() {
+  const topY = CONE_HEIGHT - DRIPPER_HANDLE_TOP_BELOW_RIM;
+  const bottomY = topY - DRIPPER_HANDLE_HEIGHT;
+  const band = DRIPPER_HANDLE_BAND_WIDTH;
+  const attachDepth = DRIPPER_WALL_THICKNESS * 0.7;
+  const outerEdge = dripperOuterConeRadiusAt(topY) + DRIPPER_HANDLE_REACH;
+  const innerEdge = outerEdge - band;
+
+  const outline = new THREE.Shape();
+  outline.moveTo(dripperOuterConeRadiusAt(topY) - attachDepth, topY);
+  outline.lineTo(outerEdge - band * 1.3, topY);
+  outline.quadraticCurveTo(outerEdge, topY, outerEdge, topY - band * 1.5);
+  outline.lineTo(outerEdge, bottomY + band * 2);
+  outline.quadraticCurveTo(outerEdge, bottomY, dripperOuterConeRadiusAt(bottomY) + band, bottomY);
+  outline.lineTo(dripperOuterConeRadiusAt(bottomY) - attachDepth, bottomY);
+  outline.closePath();
+
+  const fingerHole = new THREE.Path();
+  const holeTopY = topY - band;
+  const holeBottomY = bottomY + band;
+  fingerHole.moveTo(dripperOuterConeRadiusAt(holeTopY) + band * 0.4, holeTopY);
+  fingerHole.lineTo(innerEdge - band * 0.8, holeTopY);
+  fingerHole.quadraticCurveTo(innerEdge, holeTopY, innerEdge, holeTopY - band);
+  fingerHole.lineTo(innerEdge, holeBottomY + band * 1.5);
+  fingerHole.quadraticCurveTo(innerEdge, holeBottomY, dripperOuterConeRadiusAt(holeBottomY) + band * 0.6, holeBottomY);
+  fingerHole.closePath();
+  outline.holes.push(fingerHole);
+
+  const geometry = new THREE.ExtrudeGeometry(outline, {
+    depth: DRIPPER_HANDLE_THICKNESS,
+    bevelEnabled: true,
+    bevelThickness: DRIPPER_EDGE_ROUNDING * 2,
+    bevelSize: DRIPPER_EDGE_ROUNDING * 2,
+    bevelSegments: 3,
+    curveSegments: 16
+  });
+  geometry.translate(0, 0, -DRIPPER_HANDLE_THICKNESS / 2);
+  return geometry;
+}
+
+const ceramicMaterial = new THREE.MeshPhysicalMaterial({
+  color: COLORS.dripperCeramic,
+  roughness: 0.32,
+  clearcoat: 0.6,
+  clearcoatRoughness: 0.18,
+  side: THREE.DoubleSide
+});
+dripperGroup.add(new THREE.Mesh(createDripperLatheGeometry(), ceramicMaterial));
+const dripperHandle = new THREE.Mesh(createDripperHandleGeometry(), ceramicMaterial);
+dripperHandle.rotation.y = DRIPPER_HANDLE_ANGLE_RADIANS;
 dripperGroup.add(dripperHandle);
 
 /* 필터 종이: 젖음 모델과 같은 (각도 × 높이) 격자로 만들어 칸마다 색을 바꿉니다 */
@@ -645,12 +762,133 @@ dripperGroup.add(
   new THREE.Mesh(paperGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, side: THREE.DoubleSide }))
 );
 
-const serverGlass = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.0, 6.6, 64, 1, true), glassMaterial);
-serverGlass.position.y = -3.9;
-scene.add(serverGlass);
+/* ---------- 유리 서버 (하리오 V60 레인지 서버 모양 참고) ----------
+   두꺼운 바닥, 곧게 선 몸통, 살짝 좁아지는 입구와 한쪽으로 벌어진 따르는 입, 유리 고리 손잡이, 눈금 */
+const SERVER_BOTTOM_Y = TABLE_HEIGHT + 0.3;
+const SERVER_GLASS_THICKNESS = 0.08;
+const SERVER_BODY_OUTER_RADIUS = SERVER_INNER_RADIUS + SERVER_GLASS_THICKNESS + 0.05;
+const SERVER_SHOULDER_Y = -2.0;
+const SERVER_NECK_Y = -1.4;
+/* 커피는 곧게 선 몸통(어깨 아래)까지만 차오르게 그립니다. 약 280mL입니다 */
+const SERVER_MAXIMUM_FILL_HEIGHT = SERVER_SHOULDER_Y - SERVER_INNER_BOTTOM_Y;
+const SERVER_NECK_OUTER_RADIUS = 4.25;
+const SERVER_LIP_OUTER_RADIUS = 4.4;
+const SERVER_BOTTOM_CORNER_RADIUS = 0.55;
+const SERVER_LATHE_SEGMENTS = 96;
+/* 따르는 입: 입구 한쪽을 바깥으로 벌려 만듭니다 */
+const SERVER_SPOUT_ANGLE_RADIANS = Math.PI;
+const SERVER_SPOUT_WIDTH_RADIANS = 0.22;
+const SERVER_SPOUT_BULGE = 0.6;
+/* 손잡이와 눈금 */
+const SERVER_HANDLE_ANGLE_RADIANS = 0;
+const SERVER_HANDLE_TUBE_RADIUS = 0.28;
+const SERVER_GRADUATION_MILLILITERS = [100, 200, 300];
+const SERVER_GRADUATION_WIDTH_RADIANS = 0.32;
+
+function createServerGlassGeometry() {
+  const profile = [];
+  function addPoint(radius, height) {
+    profile.push(new THREE.Vector2(radius, height));
+  }
+  const innerBodyRadius = SERVER_BODY_OUTER_RADIUS - SERVER_GLASS_THICKNESS;
+  const innerNeckRadius = SERVER_NECK_OUTER_RADIUS - SERVER_GLASS_THICKNESS;
+  const corner = SERVER_BOTTOM_CORNER_RADIUS;
+
+  /* 바깥면: 바닥 가운데 → 둥근 바닥 모서리 → 몸통 → 어깨 → 입구 */
+  addPoint(0, SERVER_BOTTOM_Y);
+  addPoint(SERVER_BODY_OUTER_RADIUS - corner, SERVER_BOTTOM_Y);
+  addPoint(SERVER_BODY_OUTER_RADIUS - corner * 0.3, SERVER_BOTTOM_Y + corner * 0.3);
+  addPoint(SERVER_BODY_OUTER_RADIUS, SERVER_BOTTOM_Y + corner);
+  addPoint(SERVER_BODY_OUTER_RADIUS, SERVER_SHOULDER_Y);
+  addPoint(SERVER_NECK_OUTER_RADIUS, SERVER_NECK_Y);
+  addPoint(SERVER_LIP_OUTER_RADIUS, SERVER_TOP_Y - SERVER_GLASS_THICKNESS);
+  addPoint(SERVER_LIP_OUTER_RADIUS - SERVER_GLASS_THICKNESS, SERVER_TOP_Y);
+  /* 안쪽면: 입구 → 어깨 → 몸통 → 두꺼운 바닥 */
+  addPoint(SERVER_LIP_OUTER_RADIUS - SERVER_GLASS_THICKNESS * 2, SERVER_TOP_Y - SERVER_GLASS_THICKNESS);
+  addPoint(innerNeckRadius, SERVER_NECK_Y);
+  addPoint(innerBodyRadius, SERVER_SHOULDER_Y);
+  addPoint(innerBodyRadius, SERVER_INNER_BOTTOM_Y + corner);
+  addPoint(innerBodyRadius - corner * 0.7, SERVER_INNER_BOTTOM_Y + corner * 0.1);
+  addPoint(0, SERVER_INNER_BOTTOM_Y);
+
+  const geometry = new THREE.LatheGeometry(profile, SERVER_LATHE_SEGMENTS);
+  /* 입구 한쪽을 바깥으로 벌려 따르는 입을 만듭니다. 입구에 가까울수록, 가운데 각도에 가까울수록 많이 벌어집니다 */
+  const positions = geometry.getAttribute("position");
+  for (let vertexIndex = 0; vertexIndex < positions.count; vertexIndex += 1) {
+    const vertexY = positions.getY(vertexIndex);
+    if (vertexY <= SERVER_NECK_Y) {
+      continue;
+    }
+    const vertexX = positions.getX(vertexIndex);
+    const vertexZ = positions.getZ(vertexIndex);
+    const radius = Math.hypot(vertexX, vertexZ);
+    if (radius < 1e-6) {
+      continue;
+    }
+    const vertexAngle = Math.atan2(vertexZ, vertexX);
+    const angleFromSpout = THREE.MathUtils.euclideanModulo(vertexAngle - SERVER_SPOUT_ANGLE_RADIANS + Math.PI, FULL_TURN_RADIANS) - Math.PI;
+    const heightFraction = (vertexY - SERVER_NECK_Y) / (SERVER_TOP_Y - SERVER_NECK_Y);
+    const angleWeight = Math.exp(-((angleFromSpout / SERVER_SPOUT_WIDTH_RADIANS) ** 2));
+    const bulge = SERVER_SPOUT_BULGE * angleWeight * heightFraction * heightFraction;
+    const scale = (radius + bulge) / radius;
+    positions.setX(vertexIndex, vertexX * scale);
+    positions.setZ(vertexIndex, vertexZ * scale);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+const serverGlassMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0xf4f8fb,
+  transparent: true,
+  opacity: 0.22,
+  roughness: 0.03,
+  clearcoat: 1,
+  clearcoatRoughness: 0.02,
+  envMapIntensity: 1.4,
+  side: THREE.DoubleSide,
+  depthWrite: false
+});
+const serverGroup = new THREE.Group();
+scene.add(serverGroup);
+serverGroup.add(new THREE.Mesh(createServerGlassGeometry(), serverGlassMaterial));
+
+/* 유리 고리 손잡이: 어깨 아래에서 나와 몸통 아래쪽으로 돌아옵니다 */
+const serverHandleCurve = new THREE.CatmullRomCurve3([
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS - 0.1, SERVER_SHOULDER_Y + 0.4, 0),
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS + 1.3, SERVER_SHOULDER_Y + 0.2, 0),
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS + 1.9, SERVER_SHOULDER_Y - 0.8, 0),
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS + 1.8, SERVER_SHOULDER_Y - 2.4, 0),
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS + 1.0, SERVER_SHOULDER_Y - 3.3, 0),
+  new THREE.Vector3(SERVER_BODY_OUTER_RADIUS - 0.1, SERVER_SHOULDER_Y - 3.4, 0)
+]);
+const serverHandle = new THREE.Mesh(
+  new THREE.TubeGeometry(serverHandleCurve, 48, SERVER_HANDLE_TUBE_RADIUS, 12, false),
+  serverGlassMaterial
+);
+serverHandle.rotation.y = SERVER_HANDLE_ANGLE_RADIANS;
+serverGroup.add(serverHandle);
+
+/* 눈금: 커피 높이를 부피로 계산하므로 100mL마다 실제 높이에 흰 선을 긋습니다 */
+const graduationMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+const serverFloorAreaForMarks = Math.PI * SERVER_INNER_RADIUS * SERVER_INNER_RADIUS;
+SERVER_GRADUATION_MILLILITERS.forEach(function addGraduation(milliliters) {
+  const markHeight = SERVER_INNER_BOTTOM_Y + milliliters / serverFloorAreaForMarks;
+  if (markHeight > SERVER_SHOULDER_Y) {
+    return;
+  }
+  const markRadius = SERVER_BODY_OUTER_RADIUS + 0.01;
+  /* 원기둥의 각도 0은 +z 방향(처음 보는 화면 앞쪽)이라, 그 둘레에 짧은 띠를 그립니다 */
+  const mark = new THREE.Mesh(
+    new THREE.CylinderGeometry(markRadius, markRadius, 0.06, 12, 1, true, -SERVER_GRADUATION_WIDTH_RADIANS / 2, SERVER_GRADUATION_WIDTH_RADIANS),
+    graduationMaterial
+  );
+  mark.position.y = markHeight;
+  serverGroup.add(mark);
+});
 
 const serverCoffee = new THREE.Mesh(
-  new THREE.CylinderGeometry(3.9, 3.9, 1, 48),
+  new THREE.CylinderGeometry(SERVER_INNER_RADIUS, SERVER_INNER_RADIUS, 1, 64),
   new THREE.MeshPhysicalMaterial({
     color: COLORS.clearWater,
     transmission: CLEAR_WATER_TRANSMISSION,
@@ -1631,12 +1869,17 @@ function updatePaper(simulationSeconds) {
   colorAttribute.needsUpdate = true;
 }
 
-/* 서버의 커피 높이는 실제로 떨어져 닿은 커피 방울의 양으로 정합니다 */
+/* 서버의 커피 높이는 실제로 떨어져 닿은 커피 방울의 부피(1g ≈ 1cm³)를 서버 바닥 넓이로 나눠 정합니다 */
+function serverCoffeeHeight() {
+  const serverFloorArea = Math.PI * SERVER_INNER_RADIUS * SERVER_INNER_RADIUS;
+  return Math.min(SERVER_MAXIMUM_FILL_HEIGHT, dripState.landedGrams / serverFloorArea);
+}
+
 function updateServer() {
-  const coffeeHeight = clamp(dripState.landedGrams / SERVER_CAPACITY_GRAMS, 0, 1) * SERVER_INNER_HEIGHT;
+  const coffeeHeight = serverCoffeeHeight();
   serverCoffee.visible = coffeeHeight > 0.02;
   serverCoffee.scale.y = Math.max(0.001, coffeeHeight);
-  serverCoffee.position.y = TABLE_HEIGHT + 0.3 + coffeeHeight / 2;
+  serverCoffee.position.y = SERVER_INNER_BOTTOM_Y + coffeeHeight / 2;
 }
 
 /* ---------- 커피 농도에 따른 색 ---------- */
@@ -2171,8 +2414,9 @@ function landKettleParticle(particleIndex) {
     return false;
   }
 
-  /* 원뿔 안쪽에 있던 물이 벽을 넘었다면 필터 종이에 부딪힌 것입니다 */
-  if (worldY >= 0 && radius <= coneRadiusAt(PAPER_TOP_HEIGHT) + 0.25) {
+  /* 원뿔 안쪽에 있던 물이 종이 면을 막 넘었다면 필터 종이에 부딪힌 것입니다.
+     한 번에 움직이는 거리보다 조금 두꺼운 껍질 안에서만 그렇게 봅니다. 그보다 바깥은 드리퍼 바깥에서 떨어진 물입니다 */
+  if (worldY >= 0 && radius <= coneRadiusAt(worldY) + PAPER_HIT_SHELL_CENTIMETERS) {
     let angle = Math.atan2(relativeZ, relativeX);
     if (angle < 0) {
       angle += FULL_TURN_RADIANS;
@@ -2183,10 +2427,10 @@ function landKettleParticle(particleIndex) {
     return true;
   }
 
-  /* 드리퍼 테두리에 떨어진 물은 바깥으로 흘러 작업대에 쏟아집니다 */
-  if (worldY <= CONE_HEIGHT && radius <= CONE_TOP_RADIUS + 1.8) {
+  /* 드리퍼 테두리나 바깥 벽, 받침에 떨어진 물은 바깥으로 흘러 작업대에 쏟아집니다 */
+  if (radius <= dripperOuterRadiusAt(worldY)) {
     brewModel.addSpilledWater(particleMass);
-    spawnSplash(waterSplash, worldX, CONE_HEIGHT, worldZ, 2, 35);
+    spawnSplash(waterSplash, worldX, worldY, worldZ, 2, 35);
     return true;
   }
   return false;
@@ -2244,8 +2488,7 @@ const dripDirection = new THREE.Vector3(0, -1, 0);
 const hangingDropDescription = { x: 0, y: 0, z: 0, radius: 0 };
 
 function serverSurfaceHeight() {
-  const coffeeHeight = clamp(dripState.landedGrams / SERVER_CAPACITY_GRAMS, 0, 1) * SERVER_INNER_HEIGHT;
-  return TABLE_HEIGHT + 0.3 + coffeeHeight;
+  return SERVER_INNER_BOTTOM_Y + serverCoffeeHeight();
 }
 
 function landDripParticle(particleIndex) {
@@ -2821,26 +3064,63 @@ function getCameraTarget() {
   return DRIPPER_FOCUS.clone();
 }
 
+/* 끌어서 돌린 뒤 남은 관성 회전을 버립니다. 그대로 두면 시점 이동이 끝난 뒤 남은 회전이 이어져 고른 시점에서 벗어납니다.
+   OrbitControls는 남은 회전을 직접 지우는 방법이 없어, 감속 없이 한 번 갱신해 소진시킨 뒤 카메라를 원래 자리로 되돌립니다 */
+const savedCameraPosition = new THREE.Vector3();
+const savedOrbitTarget = new THREE.Vector3();
+
+function discardOrbitInertia() {
+  if (!orbitControls) {
+    return;
+  }
+  savedCameraPosition.copy(camera.position);
+  savedOrbitTarget.copy(orbitControls.target);
+  orbitControls.enableDamping = false;
+  orbitControls.update();
+  orbitControls.enableDamping = true;
+  camera.position.copy(savedCameraPosition);
+  orbitControls.target.copy(savedOrbitTarget);
+  camera.lookAt(savedOrbitTarget);
+}
+
 function animateCameraTo(newTarget, newOffset) {
+  discardOrbitInertia();
   const currentTarget = getCameraTarget();
   let offset = newOffset;
   if (!offset) {
     offset = camera.position.clone().sub(currentTarget);
   }
+  const fromSpherical = new THREE.Spherical().setFromVector3(camera.position.clone().sub(currentTarget));
+  const toSpherical = new THREE.Spherical().setFromVector3(offset);
+  /* 가까운 쪽으로 돌도록 수평 각도 차이를 -π에서 π 사이로 맞춥니다 */
+  const thetaDifference = THREE.MathUtils.euclideanModulo(toSpherical.theta - fromSpherical.theta + Math.PI, FULL_TURN_RADIANS) - Math.PI;
+  toSpherical.theta = fromSpherical.theta + thetaDifference;
   cameraAnimation = {
     progress: 0,
     fromTarget: currentTarget,
     toTarget: newTarget.clone(),
-    fromPosition: camera.position.clone(),
-    toPosition: newTarget.clone().add(offset)
+    fromSpherical: fromSpherical,
+    toSpherical: toSpherical
   };
 }
 
+const animatedSpherical = new THREE.Spherical();
+const animatedOffset = new THREE.Vector3();
+
+/* 카메라를 직선이 아니라 바라보는 점 둘레의 구면을 따라 옮깁니다. 직선으로 옮기면 반대편으로 갈 때 드리퍼를 스치듯 확대됩니다 */
 function updateCameraAnimation(deltaSeconds) {
   cameraAnimation.progress = Math.min(1, cameraAnimation.progress + deltaSeconds / CAMERA_ANIMATION_SECONDS);
   const easedProgress = 1 - Math.pow(1 - cameraAnimation.progress, 3);
   const target = cameraAnimation.fromTarget.clone().lerp(cameraAnimation.toTarget, easedProgress);
-  camera.position.copy(cameraAnimation.fromPosition).lerp(cameraAnimation.toPosition, easedProgress);
+  const fromSpherical = cameraAnimation.fromSpherical;
+  const toSpherical = cameraAnimation.toSpherical;
+  animatedSpherical.set(
+    fromSpherical.radius + (toSpherical.radius - fromSpherical.radius) * easedProgress,
+    fromSpherical.phi + (toSpherical.phi - fromSpherical.phi) * easedProgress,
+    fromSpherical.theta + (toSpherical.theta - fromSpherical.theta) * easedProgress
+  );
+  animatedOffset.setFromSpherical(animatedSpherical);
+  camera.position.copy(target).add(animatedOffset);
   if (orbitControls) {
     orbitControls.target.copy(target);
   }

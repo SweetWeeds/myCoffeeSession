@@ -4,7 +4,7 @@
 (function setUpCommonLayout() {
   const THEME_STORAGE_KEY = "coffee-session-theme";
   /* 배포할 때마다 바뀌는 판 번호. 화면 맨 아래에 보여 주어, 브라우저가 예전 파일을 쓰고 있는지 확인할 수 있게 합니다 */
-  const SITE_VERSION = "20261017a";
+  const SITE_VERSION = "20261017b";
 
   const sitePages = [
     { file: "index.html", title: "홈", longTitle: "커피 세션 홈" },

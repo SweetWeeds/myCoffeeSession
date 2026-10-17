@@ -776,15 +776,20 @@ kettlePivot.position.copy(KETTLE_PARKED_BODY);
 /* ---------- 물줄기와 물방울 그리기 ---------- */
 
 /* 물은 빛을 굴절시키는 투명한 액체로, 커피는 갈색이 비치는 액체로 그립니다 */
+/* 투과 효과는 물줄기 바로 뒤의 장면만 비춰 보여서, 완전히 투명하게 두면 흰 필터 종이 앞에서 물줄기가 사라집니다.
+   실제 물줄기는 주변의 어두운 방을 굴절시키고 반짝이는 띠가 생겨 보이므로, 투과를 줄이고 옅은 회청색과 겉면 광택을 줍니다 */
 const waterLiquidMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0xe4f3ff,
-  transmission: 0.95,
-  thickness: 0.25,
-  roughness: 0.04,
+  color: 0xa9c4d8,
+  transmission: 0.55,
+  thickness: 0.4,
+  roughness: 0.05,
   ior: 1.33,
   specularIntensity: 1,
-  attenuationColor: new THREE.Color(0xbfe3f5),
-  attenuationDistance: 2
+  clearcoat: 1,
+  clearcoatRoughness: 0.03,
+  envMapIntensity: 1.6,
+  attenuationColor: new THREE.Color(0x8fb8d4),
+  attenuationDistance: 1.2
 });
 const coffeeLiquidMaterial = new THREE.MeshPhysicalMaterial({
   color: 0x7a4321,
@@ -855,7 +860,7 @@ function catmullRom(previousValue, startValue, endValue, nextValue, fraction) {
     2 * startValue +
     (endValue - previousValue) * fraction +
     (2 * previousValue - 5 * startValue + 4 * endValue - nextValue) * fractionSquared +
-    (3 * startValue - previousValue + 3 * nextValue - endValue) * fractionCubed
+    (3 * startValue - previousValue - 3 * endValue + nextValue) * fractionCubed
   );
 }
 
@@ -3059,6 +3064,23 @@ CoffeeSession.simulatorDebug = {
       dripTubeIndexes: dripStreamRenderer.tubeGeometry.drawRange.count,
       dripDrops: dripStreamRenderer.dropMesh.count
     };
+  },
+  /* 화면에 실제로 그려지는 물줄기 관의 정점 범위를 주둥이 위치와 비교하기 위한 값 */
+  getKettleTubeBounds: function getKettleTubeBounds() {
+    const geometry = kettleStreamRenderer.tubeGeometry;
+    const indexes = geometry.getIndex().array;
+    const positions = geometry.getAttribute("position").array;
+    const bounds = { minimumY: Infinity, maximumY: -Infinity, highestVertex: null, spoutTip: spoutTipWorld.toArray() };
+    for (let indexPosition = 0; indexPosition < geometry.drawRange.count; indexPosition += 1) {
+      const vertexOffset = indexes[indexPosition] * 3;
+      const vertexY = positions[vertexOffset + 1];
+      bounds.minimumY = Math.min(bounds.minimumY, vertexY);
+      if (vertexY > bounds.maximumY) {
+        bounds.maximumY = vertexY;
+        bounds.highestVertex = [positions[vertexOffset], vertexY, positions[vertexOffset + 2], indexes[indexPosition]];
+      }
+    }
+    return bounds;
   },
   getStreamState: function getStreamState() {
     return {

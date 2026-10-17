@@ -90,6 +90,9 @@ const KETTLE_TILT_SECONDS = 0.35;
 /* 주전자는 손으로 옮기는 정도의 속도로만 포인터를 따라갑니다 */
 const KETTLE_MAXIMUM_SPEED_CENTIMETERS_PER_SECOND = 40;
 const KETTLE_FOLLOW_STIFFNESS_PER_SECOND = 12;
+/* 시점을 돌리면 주전자도 따라 돌아, 화면에서 언제나 주둥이가 왼쪽을 향하게 합니다.
+   한 번에 휙 돌면 주둥이가 빠르게 움직여 물줄기가 흩날리므로 손으로 돌리는 빠르기로 제한합니다 */
+const KETTLE_TURN_SPEED_RADIANS_PER_SECOND = 2.5;
 /* 물이 부딪히는 주전자 몸통의 크기(모델 기준 반지름과 위아래 범위) */
 const KETTLE_BODY_COLLISION_RADIUS = 2.25;
 const KETTLE_BODY_COLLISION_BOTTOM = -1.7;
@@ -122,11 +125,34 @@ const RIPPLE_COUNT = 24;
 const RIPPLE_SPAWN_INTERVAL_SECONDS = 0.05;
 const RIPPLE_LIFETIME_SECONDS = 0.7;
 const SPLASH_PARTICLE_COUNT = 240;
+/* 물결 고리는 액체 색에 흰 반사광을 이만큼 섞어 그립니다 */
+const RIPPLE_HIGHLIGHT_WHITENESS = 0.6;
+
+/* 커피 색: 녹아 있는 성분이 빛을 흡수하는 정도(비어-람베르트 법칙)로 정합니다.
+   파란빛이 가장 많이, 빨간빛이 가장 적게 흡수되어 옅으면 호박색, 진하면 검은 갈색이 됩니다.
+   값은 농도 1%인 커피를 1cm 두께로 지날 때 빛이 줄어드는 정도(빨강, 초록, 파랑)입니다 */
+const COFFEE_ABSORPTION_PER_PERCENT_CENTIMETER = { red: 1.0, green: 1.6, blue: 2.4 };
+/* 같은 커피라도 눈에 보이는 두께가 달라 진하기가 다르게 보입니다: 가는 물줄기 < 드리퍼에 고인 물 < 서버 */
+const STREAM_VIEW_DEPTH_CENTIMETERS = 1.0;
+const BED_LIQUID_VIEW_DEPTH_CENTIMETERS = 1.2;
+const SERVER_VIEW_DEPTH_CENTIMETERS = 3.0;
+/* 화면의 커피 색이 갑자기 바뀌지 않도록 농도 변화를 이 시간에 걸쳐 따라갑니다.
+   서버 쪽은 새 물을 부을 때마다 계산상 농도가 출렁여서 더 천천히 따라가게 합니다 */
+const STREAM_COLOR_FOLLOW_SECONDS = 0.5;
+const SERVER_COLOR_FOLLOW_SECONDS = 3;
+/* 투과 정도: 맑은 물은 많이 비치고 진한 커피는 거의 비치지 않습니다 */
+const CLEAR_WATER_TRANSMISSION = 0.55;
+const STRONG_COFFEE_STREAM_TRANSMISSION = 0.3;
+const CLEAR_WATER_SURFACE_OPACITY = 0.3;
+const STRONG_COFFEE_SURFACE_OPACITY = 0.85;
 
 /* 필터 종이 격자 */
 const PAPER_ANGLE_SEGMENTS = 72;
 const PAPER_HEIGHT_ROWS = 28;
 const PAPER_CONTACT_SAMPLE_RADIUS = 0.92;
+/* 종이는 조금만 젖어도 눈에 띄게 어두워지고 비쳐 보여서, 젖은 곳과 마른 곳 사이에 뚜렷한 경계선이 생깁니다.
+   젖음이 이 값 이상이면 완전히 젖은 색으로 그립니다 */
+const PAPER_WETNESS_FOR_FULL_DARKENING = 0.4;
 
 const CAMERA_OFFSETS = {
   angled: new THREE.Vector3(0, 17, 21.5),
@@ -137,7 +163,9 @@ const CAMERA_ANIMATION_SECONDS = 0.6;
 
 const COLORS = {
   paper: new THREE.Color(0xf3efe6),
-  wetPaper: new THREE.Color(0xcdc3b1),
+  /* 젖은 종이는 어두워지고 반쯤 비쳐서 뒤에 있는 빨간 드리퍼 색이 살짝 배어 보입니다 */
+  wetPaper: new THREE.Color(0xae8f88),
+  clearWater: new THREE.Color(0xa9c4d8),
   stainedPaper: new THREE.Color(0x8a5a35),
   dryGrounds: new THREE.Color(0xb48a62),
   wetGrounds: new THREE.Color(0x4b2d1d),
@@ -274,6 +302,14 @@ const pourState = {
 const dripState = {
   emittedGrams: 0,
   landedGrams: 0
+};
+
+/* 화면에 보이는 커피 농도(%). 물만 있으면 0이라 물 색으로 보입니다 */
+const liquidColorState = {
+  streamStrengthPercent: 0,
+  serverStrengthPercent: 0,
+  previousPercolatedGrams: 0,
+  previousBypassGrams: 0
 };
 
 const activePointerIds = new Set();
@@ -615,7 +651,13 @@ scene.add(serverGlass);
 
 const serverCoffee = new THREE.Mesh(
   new THREE.CylinderGeometry(3.9, 3.9, 1, 48),
-  new THREE.MeshStandardMaterial({ color: 0x4a2814, roughness: 0.2 })
+  new THREE.MeshPhysicalMaterial({
+    color: COLORS.clearWater,
+    transmission: CLEAR_WATER_TRANSMISSION,
+    thickness: 2,
+    roughness: 0.15,
+    ior: 1.34
+  })
 );
 serverCoffee.visible = false;
 scene.add(serverCoffee);
@@ -686,7 +728,7 @@ dripperGroup.add(new THREE.Mesh(bedGeometry, new THREE.MeshStandardMaterial({ ve
 const waterGeometry = createGridGeometry();
 const waterMesh = new THREE.Mesh(
   waterGeometry,
-  new THREE.MeshStandardMaterial({ color: 0x6b3b1d, transparent: true, opacity: 0.72, roughness: 0.12, metalness: 0.05 })
+  new THREE.MeshStandardMaterial({ color: COLORS.clearWater, transparent: true, opacity: CLEAR_WATER_SURFACE_OPACITY, roughness: 0.12, metalness: 0.05 })
 );
 dripperGroup.add(waterMesh);
 
@@ -779,8 +821,8 @@ kettlePivot.position.copy(KETTLE_PARKED_BODY);
 /* 투과 효과는 물줄기 바로 뒤의 장면만 비춰 보여서, 완전히 투명하게 두면 흰 필터 종이 앞에서 물줄기가 사라집니다.
    실제 물줄기는 주변의 어두운 방을 굴절시키고 반짝이는 띠가 생겨 보이므로, 투과를 줄이고 옅은 회청색과 겉면 광택을 줍니다 */
 const waterLiquidMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0xa9c4d8,
-  transmission: 0.55,
+  color: COLORS.clearWater,
+  transmission: CLEAR_WATER_TRANSMISSION,
   thickness: 0.4,
   roughness: 0.05,
   ior: 1.33,
@@ -791,15 +833,8 @@ const waterLiquidMaterial = new THREE.MeshPhysicalMaterial({
   attenuationColor: new THREE.Color(0x8fb8d4),
   attenuationDistance: 1.2
 });
-const coffeeLiquidMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0x7a4321,
-  transmission: 0.5,
-  thickness: 0.3,
-  roughness: 0.08,
-  ior: 1.34,
-  attenuationColor: new THREE.Color(0x3a1a08),
-  attenuationDistance: 0.4
-});
+/* 드리퍼에서 떨어지는 줄기는 물과 같은 재질에서 시작해, 녹아 나온 성분이 많을수록 커피 색으로 바뀝니다 */
+const coffeeLiquidMaterial = waterLiquidMaterial.clone();
 
 /* 이어진 물줄기를 관 모양으로 그립니다. 입자 사이를 매끈하게 나눠 그리면서
    표면 출렁임(레일리-플라토 불안정) 때문에 잘록해지고 불룩해지는 모양을 반지름에 반영합니다 */
@@ -1110,6 +1145,12 @@ function updateRippleSystem(rippleSystem, simulationSeconds) {
   });
 }
 
+function setRippleSystemColor(rippleSystem, color) {
+  rippleSystem.ripples.forEach(function paintRipple(ripple) {
+    ripple.mesh.material.color.copy(color);
+  });
+}
+
 function clearRippleSystem(rippleSystem) {
   rippleSystem.ripples.forEach(function hideRipple(ripple) {
     ripple.mesh.visible = false;
@@ -1128,6 +1169,7 @@ function createSplashSystem(color) {
   points.frustumCulled = false;
   scene.add(points);
   return {
+    material: points.material,
     geometry: geometry,
     positions: positions,
     velocities: new Float32Array(SPLASH_PARTICLE_COUNT * 3),
@@ -1191,11 +1233,11 @@ const kettleStreamRenderer = createStreamRenderer(waterLiquidMaterial, KETTLE_ST
 const dripStreamRenderer = createStreamRenderer(coffeeLiquidMaterial, DRIP_STREAM_MAXIMUM_PARTICLES);
 const waterSplash = createSplashSystem(0xcfe9f7);
 const waterRipples = createRippleSystem(0xffffff);
-const coffeeRipples = createRippleSystem(0xd9b38c);
+const coffeeRipples = createRippleSystem(COLORS.clearWater);
 const previousSpoutTip = new THREE.Vector3();
 const previousDripOutlet = new THREE.Vector3();
 let hasPreviousSpoutTip = false;
-const coffeeSplash = createSplashSystem(0x6b3a1c);
+const coffeeSplash = createSplashSystem(COLORS.clearWater);
 
 /* ---------- 그라인더 ---------- */
 
@@ -1580,8 +1622,9 @@ function updatePaper(simulationSeconds) {
       const angleIndex = columnIndex % PAPER_ANGLE_SEGMENTS;
       const wetness = paperModel.readWetness(angleIndex, rowIndex);
       const stain = paperModel.readStain(angleIndex, rowIndex);
-      temporaryColor.copy(COLORS.paper).lerp(COLORS.wetPaper, wetness);
-      temporaryColor.lerp(COLORS.stainedPaper, clamp(stain * wetness * 0.75, 0, 1));
+      const visibleWetness = clamp(wetness / PAPER_WETNESS_FOR_FULL_DARKENING, 0, 1);
+      temporaryColor.copy(COLORS.paper).lerp(COLORS.wetPaper, visibleWetness);
+      temporaryColor.lerp(COLORS.stainedPaper, clamp(stain * visibleWetness * 0.75, 0, 1));
       colorAttribute.setXYZ(rowIndex * paperColumnCount + columnIndex, temporaryColor.r, temporaryColor.g, temporaryColor.b);
     }
   }
@@ -1594,6 +1637,83 @@ function updateServer() {
   serverCoffee.visible = coffeeHeight > 0.02;
   serverCoffee.scale.y = Math.max(0.001, coffeeHeight);
   serverCoffee.position.y = TABLE_HEIGHT + 0.3 + coffeeHeight / 2;
+}
+
+/* ---------- 커피 농도에 따른 색 ---------- */
+
+const liquidTint = new THREE.Color();
+const whiteColor = new THREE.Color(0xffffff);
+const streamLiquidColor = new THREE.Color();
+const bedLiquidColor = new THREE.Color();
+const serverLiquidColor = new THREE.Color();
+
+/* 농도(%)와 보이는 두께(cm)로 액체 색을 정해 targetColor에 넣고, 커피 색이 얼마나 짙은지(0–1)를 돌려줍니다.
+   농도가 0이면 맑은 물 색 그대로입니다 */
+function liquidColorForStrength(strengthPercent, viewDepthCentimeters, targetColor) {
+  const opticalDepth = Math.max(0, strengthPercent) * viewDepthCentimeters;
+  const redTransmittance = Math.exp(-COFFEE_ABSORPTION_PER_PERCENT_CENTIMETER.red * opticalDepth);
+  const greenTransmittance = Math.exp(-COFFEE_ABSORPTION_PER_PERCENT_CENTIMETER.green * opticalDepth);
+  const blueTransmittance = Math.exp(-COFFEE_ABSORPTION_PER_PERCENT_CENTIMETER.blue * opticalDepth);
+  const coffeeDarkness = 1 - greenTransmittance;
+  /* 물의 푸른 기는 커피 색이 짙어질수록 묻혀서 보이지 않게 됩니다 */
+  liquidTint.copy(COLORS.clearWater).lerp(whiteColor, coffeeDarkness);
+  targetColor.setRGB(
+    liquidTint.r * redTransmittance,
+    liquidTint.g * greenTransmittance,
+    liquidTint.b * blueTransmittance
+  );
+  return coffeeDarkness;
+}
+
+function followValue(currentValue, targetValue, deltaSeconds, followSeconds) {
+  return currentValue + (targetValue - currentValue) * Math.min(1, deltaSeconds / followSeconds);
+}
+
+/* 원두 층의 물, 떨어지는 커피 줄기, 서버의 커피 색을 지금 농도에 맞춥니다 */
+function updateLiquidColors(simulationSeconds) {
+  const liveStrength = brewModel.measureLiveStrength();
+
+  /* 떨어지는 줄기 = 원두 층을 지나온 커피 + 필터 벽을 타고 바로 내려온 물. 벽을 탄 물만큼 묽어집니다 */
+  const newPercolatedGrams = brewModel.state.percolatedTotalGrams - liquidColorState.previousPercolatedGrams;
+  const newBypassGrams = brewModel.state.bypassGrams - liquidColorState.previousBypassGrams;
+  liquidColorState.previousPercolatedGrams = brewModel.state.percolatedTotalGrams;
+  liquidColorState.previousBypassGrams = brewModel.state.bypassGrams;
+  const newDrippingGrams = newPercolatedGrams + newBypassGrams;
+  if (newDrippingGrams > 1e-6 && simulationSeconds > 0) {
+    const drippingStrengthPercent = (liveStrength.bedLiquidStrengthPercent * newPercolatedGrams) / newDrippingGrams;
+    liquidColorState.streamStrengthPercent = followValue(
+      liquidColorState.streamStrengthPercent,
+      drippingStrengthPercent,
+      simulationSeconds,
+      STREAM_COLOR_FOLLOW_SECONDS
+    );
+  }
+  if (simulationSeconds > 0) {
+    liquidColorState.serverStrengthPercent = followValue(
+      liquidColorState.serverStrengthPercent,
+      liveStrength.beverageStrengthPercent,
+      simulationSeconds,
+      SERVER_COLOR_FOLLOW_SECONDS
+    );
+  }
+
+  const bedDarkness = liquidColorForStrength(liveStrength.bedLiquidStrengthPercent, BED_LIQUID_VIEW_DEPTH_CENTIMETERS, bedLiquidColor);
+  waterMesh.material.color.copy(bedLiquidColor);
+  waterMesh.material.opacity = CLEAR_WATER_SURFACE_OPACITY + (STRONG_COFFEE_SURFACE_OPACITY - CLEAR_WATER_SURFACE_OPACITY) * bedDarkness;
+
+  const streamDarkness = liquidColorForStrength(liquidColorState.streamStrengthPercent, STREAM_VIEW_DEPTH_CENTIMETERS, streamLiquidColor);
+  coffeeLiquidMaterial.color.copy(streamLiquidColor);
+  coffeeLiquidMaterial.attenuationColor.copy(streamLiquidColor);
+  coffeeLiquidMaterial.transmission =
+    CLEAR_WATER_TRANSMISSION + (STRONG_COFFEE_STREAM_TRANSMISSION - CLEAR_WATER_TRANSMISSION) * streamDarkness;
+  coffeeSplash.material.color.copy(streamLiquidColor);
+
+  const serverDarkness = liquidColorForStrength(liquidColorState.serverStrengthPercent, SERVER_VIEW_DEPTH_CENTIMETERS, serverLiquidColor);
+  serverCoffee.material.color.copy(serverLiquidColor);
+  serverCoffee.material.transmission = CLEAR_WATER_TRANSMISSION * (1 - serverDarkness);
+  /* 수면의 물결은 액체보다 밝은 반사광으로 보입니다 */
+  temporaryColor.copy(serverLiquidColor).lerp(whiteColor, RIPPLE_HIGHLIGHT_WHITENESS);
+  setRippleSystemColor(coffeeRipples, temporaryColor);
 }
 
 /* ---------- 그라인더 ---------- */
@@ -1910,7 +2030,29 @@ function moveKettleToward(target, deltaSeconds) {
   kettlePivot.position.add(kettleMove);
 }
 
+const cameraRightDirection = new THREE.Vector3();
+
+/* 주전자 모델의 주둥이는 모델 기준 +x 방향입니다. 이것이 카메라 기준 왼쪽(카메라 오른쪽의 반대)을 향하게 하는 회전각을 구합니다.
+   y축으로 각도 θ만큼 돌리면 +x 방향은 (cos θ, 0, -sin θ)가 됩니다 */
+function kettleYawFacingScreenLeft() {
+  cameraRightDirection.setFromMatrixColumn(camera.matrixWorld, 0);
+  cameraRightDirection.y = 0;
+  if (cameraRightDirection.lengthSq() < 1e-6) {
+    return kettlePivot.rotation.y;
+  }
+  return Math.atan2(cameraRightDirection.z, -cameraRightDirection.x);
+}
+
+function turnKettleTowardScreenLeft(deltaSeconds) {
+  let yawDifference = kettleYawFacingScreenLeft() - kettlePivot.rotation.y;
+  /* 가까운 쪽으로 돌도록 차이를 -π에서 π 사이로 맞춥니다 */
+  yawDifference = THREE.MathUtils.euclideanModulo(yawDifference + Math.PI, FULL_TURN_RADIANS) - Math.PI;
+  const maximumTurn = KETTLE_TURN_SPEED_RADIANS_PER_SECOND * deltaSeconds;
+  kettlePivot.rotation.y += clamp(yawDifference, -maximumTurn, maximumTurn);
+}
+
 function updateKettlePose(deltaSeconds, wantsToPour) {
+  turnKettleTowardScreenLeft(deltaSeconds);
   const isHoldingKettle = (selectedTool === "water" || pourState.isAutomaticRunning) && !isBrewFinished();
   if (isHoldingKettle) {
     kettleHeldTarget.set(pourState.kettleTargetX, KETTLE_BODY_HEIGHT, pourState.kettleTargetZ);
@@ -2181,6 +2323,10 @@ function resetWorkbench() {
   previousDripOutlet.set(0, DRIPPER_OUTLET_HEIGHT, 0);
   dripState.emittedGrams = 0;
   dripState.landedGrams = 0;
+  liquidColorState.streamStrengthPercent = 0;
+  liquidColorState.serverStrengthPercent = 0;
+  liquidColorState.previousPercolatedGrams = 0;
+  liquidColorState.previousBypassGrams = 0;
   pourState.tiltProgress = 0;
 
   isHeatmapVisible = false;
@@ -2191,6 +2337,7 @@ function resetWorkbench() {
   updateBedAndWaterMeshes();
   updatePaper(0);
   updateServer();
+  updateLiquidColors(0);
   renderBeans();
   renderScale();
   renderTimeline();
@@ -2974,6 +3121,7 @@ function animationFrame(timestamp) {
   updateBedAndWaterMeshes();
   updatePaper(isBrewFinished() ? deltaSeconds : simulationSeconds);
   updateServer();
+  updateLiquidColors(simulationSeconds);
 
   if (!isBrewFinished()) {
     finishButton.disabled = brewModel.state.totalPouredGrams <= 0;

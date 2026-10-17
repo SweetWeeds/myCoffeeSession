@@ -686,6 +686,43 @@
       return (extractedGrams[cellIndex] / coffeeGrams[cellIndex]) * 100;
     }
 
+    /* 녹아 나온 성분은 원두 층의 물에 고르게 섞여 있다고 보고, 빠져나온 물의 비율만큼 서버로 갑니다 */
+    function calculateSolubleBalance(totalExtractedGrams, totalRetainedGrams) {
+      const liquidThroughBedGrams = state.percolatedTotalGrams + totalRetainedGrams + state.waterOnBedGrams;
+      let beverageSolubleGrams = 0;
+      let bedLiquidStrengthPercent = 0;
+      if (liquidThroughBedGrams > 0) {
+        beverageSolubleGrams = (totalExtractedGrams * state.percolatedTotalGrams) / liquidThroughBedGrams;
+        bedLiquidStrengthPercent = (totalExtractedGrams / liquidThroughBedGrams) * 100;
+      }
+      return { beverageSolubleGrams: beverageSolubleGrams, bedLiquidStrengthPercent: bedLiquidStrengthPercent };
+    }
+
+    /* 화면에서 커피 색을 정하려고 지금 이 순간의 농도를 잽니다.
+       bedLiquidStrengthPercent: 원두 층에 고인 물(곧 아래로 떨어질 커피)의 농도
+       beverageSolubleGrams: 지금까지 서버로 내려간 커피에 녹아 있는 성분의 양 */
+    function measureLiveStrength() {
+      let totalExtractedGrams = 0;
+      let totalRetainedGrams = 0;
+      for (let cellIndex = 0; cellIndex < cellCount; cellIndex += 1) {
+        if (!isActive[cellIndex]) {
+          continue;
+        }
+        totalExtractedGrams += extractedGrams[cellIndex];
+        totalRetainedGrams += absorbedGrams[cellIndex];
+      }
+      const balance = calculateSolubleBalance(totalExtractedGrams, totalRetainedGrams);
+      let beverageStrengthPercent = 0;
+      if (state.beverageGrams > 0) {
+        beverageStrengthPercent = (balance.beverageSolubleGrams / state.beverageGrams) * 100;
+      }
+      return {
+        bedLiquidStrengthPercent: balance.bedLiquidStrengthPercent,
+        beverageSolubleGrams: balance.beverageSolubleGrams,
+        beverageStrengthPercent: beverageStrengthPercent
+      };
+    }
+
     function evaluateResult() {
       const doseGrams = state.groundsDepositedGrams;
       const hasCoffee = doseGrams >= MINIMUM_COFFEE_FOR_RESULT_GRAMS;
@@ -719,13 +756,8 @@
         dryCoffeePercent = (dryCoffeeGrams / doseGrams) * 100;
       }
 
-      /* 녹아 나온 성분은 원두 층의 물에 고르게 섞여 있다고 보고, 빠져나온 물의 비율만큼 서버로 갑니다 */
       const leftoverWaterGrams = state.waterOnBedGrams;
-      const liquidThroughBedGrams = state.percolatedTotalGrams + totalRetainedGrams + leftoverWaterGrams;
-      let beverageSolubleGrams = 0;
-      if (liquidThroughBedGrams > 0) {
-        beverageSolubleGrams = (totalExtractedGrams * state.percolatedTotalGrams) / liquidThroughBedGrams;
-      }
+      const beverageSolubleGrams = calculateSolubleBalance(totalExtractedGrams, totalRetainedGrams).beverageSolubleGrams;
 
       let extractionPercent = 0;
       if (hasCoffee) {
@@ -823,6 +855,7 @@
       advance: advance,
       isNaturallyComplete: isNaturallyComplete,
       finish: finish,
+      measureLiveStrength: measureLiveStrength,
       exportCellState: exportCellState
     };
   }

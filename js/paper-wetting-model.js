@@ -11,13 +11,20 @@
   const CONTACT_WETTING_RATE_PER_SECOND = 3;
   const CONTACT_STAIN_RATE_PER_SECOND = 0.6;
   const SIDEWAYS_WICKING_RATE_PER_SECOND = 0.5;
-  const UPWARD_WICKING_RATE_PER_SECOND = 0.12;
+  /* 거름종이는 모세관 현상으로 물을 꽤 빨리 끌어 올립니다(30초에 2cm 남짓).
+     높이 한 칸이 약 0.3cm이므로 이 값은 약 0.08cm²/s의 번짐 빠르기에 해당합니다 */
+  const UPWARD_WICKING_RATE_PER_SECOND = 1.0;
+  /* 물이 종이를 타고 올라갈 때 커피 성분은 물보다 뒤처집니다(종이 크로마토그래피와 같은 원리).
+     그래서 젖은 경계 위쪽은 옅고, 아래쪽으로 갈수록 갈색이 짙어집니다 */
+  const UPWARD_STAIN_CARRY_FRACTION = 0.3;
   const DOWNWARD_WICKING_RATE_PER_SECOND = 0.5;
   /* 이보다 더 젖은 칸에서는 남는 물이 아래 칸으로 흘러내립니다 */
   const RUNOFF_WETNESS_THRESHOLD = 0.75;
   const RUNOFF_RATE_PER_SECOND = 8;
   /* 종이는 물이 마르면서 아주 천천히 밝아집니다 */
   const DRYING_RATE_PER_SECOND = 0.004;
+  /* 한 번에 너무 긴 시간을 계산하면 번지는 양이 칸에 있는 물보다 커져 값이 튀므로, 짧게 나눠 계산합니다 */
+  const MAXIMUM_STEP_SECONDS = 0.1;
 
   function createPaperWettingModel(options) {
     const angleSegments = options.angleSegments;
@@ -107,6 +114,10 @@
             }
             nextWetness[cellIndex] -= verticalFlow;
             nextWetness[upperIndex] += verticalFlow;
+            if (verticalFlow > 0) {
+              const carriedStain = (stain[cellIndex] - stain[upperIndex]) * Math.min(1, verticalFlow) * UPWARD_STAIN_CARRY_FRACTION;
+              nextStain[upperIndex] += Math.max(0, carriedStain);
+            }
           }
 
           /* 너무 많이 젖은 칸의 물은 흘러내립니다. 커피 색도 함께 끌려 내려갑니다 */
@@ -126,9 +137,14 @@
       }
     }
 
-    function step(stepSeconds, contactHeights, contactStains) {
-      applyContact(contactHeights, contactStains, stepSeconds);
-      spread(stepSeconds);
+    function step(elapsedSeconds, contactHeights, contactStains) {
+      let remainingSeconds = elapsedSeconds;
+      while (remainingSeconds > 1e-9) {
+        const stepSeconds = Math.min(MAXIMUM_STEP_SECONDS, remainingSeconds);
+        remainingSeconds -= stepSeconds;
+        applyContact(contactHeights, contactStains, stepSeconds);
+        spread(stepSeconds);
+      }
     }
 
     function reset() {

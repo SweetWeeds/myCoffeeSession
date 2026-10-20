@@ -43,9 +43,9 @@ const BED_FLOOR_Y = 1.4;
 const BED_MILLIMETER_TO_WORLD = 0.08;
 const WATER_MILLIMETER_TO_WORLD = 0.04;
 const HIDDEN_WATER_THRESHOLD_MILLIMETERS = 0.05;
-/* 드리퍼 바깥 모양: 도자기 벽, 아래쪽 짧은 목, 서버 위에 얹히는 둥근 받침 */
+/* 드리퍼 바깥 모양: 투명한 벽, 아래쪽 짧은 목, 서버 위에 얹히는 둥근 받침. 투명 수지 V60처럼 벽이 얇습니다 */
 const DRIPPER_INNER_SURFACE_GAP = 0.15;
-const DRIPPER_WALL_THICKNESS = 0.45;
+const DRIPPER_WALL_THICKNESS = 0.3;
 const DRIPPER_NECK_RADIUS = 1.75;
 const DRIPPER_BASE_RADIUS = 4.5;
 const DRIPPER_BASE_TOP_Y = -0.55;
@@ -177,8 +177,8 @@ const CAMERA_ANIMATION_SECONDS = 0.6;
 
 const COLORS = {
   paper: new THREE.Color(0xf3efe6),
-  /* 젖은 종이는 어두워지고 반쯤 비쳐서 뒤에 있는 빨간 드리퍼 색이 살짝 배어 보입니다 */
-  wetPaper: new THREE.Color(0xae8f88),
+  /* 젖은 종이는 어두워지고 반쯤 비쳐 보입니다. 드리퍼가 투명해서 뒤로 비치는 색 없이 회갈색이 됩니다 */
+  wetPaper: new THREE.Color(0xb3aa9c),
   clearWater: new THREE.Color(0xa9c4d8),
   stainedPaper: new THREE.Color(0x8a5a35),
   dryGrounds: new THREE.Color(0xb48a62),
@@ -187,7 +187,8 @@ const COLORS = {
   underExtracted: new THREE.Color(0x3b6fb6),
   idealExtracted: new THREE.Color(0x3f9a5a),
   overExtracted: new THREE.Color(0xc0392b),
-  dripperCeramic: new THREE.Color(0xa3242b)
+  /* 투명 드리퍼(유리나 투명 수지로 만든 V60)는 아주 옅은 푸른 기만 돕니다 */
+  clearDripper: new THREE.Color(0xeef5f8)
 };
 
 const TOOL_HINTS = {
@@ -591,7 +592,7 @@ const dripperGroup = new THREE.Group();
 scene.add(dripperGroup);
 
 /* ---------- 드리퍼 (하리오 V60 모양 참고) ----------
-   안쪽: 꼭지각 60도 원뿔과 큰 구멍 하나. 바깥: 두께 있는 도자기 벽, 둥근 테두리,
+   안쪽: 꼭지각 60도 원뿔과 큰 구멍 하나. 바깥: 두께 있는 투명한 벽, 둥근 테두리,
    아래쪽 짧은 목과 서버 위에 얹히는 둥근 받침, 옆에 손가락을 넣는 고리 손잡이.
    안쪽 나선형 리브는 늘 거름종이에 가려 보이지 않아 그리지 않습니다 */
 const DRIPPER_RIM_RISE = 0.12;
@@ -615,7 +616,7 @@ function dripperOuterConeRadiusAt(height) {
   return coneRadiusAt(height) + dripperOuterWallOffset;
 }
 
-/* 드리퍼 바깥면의 반지름. 드리퍼 밖으로 떨어진 물이 도자기에 부딪혔는지 판단할 때도 씁니다 */
+/* 드리퍼 바깥면의 반지름. 드리퍼 밖으로 떨어진 물이 드리퍼 벽에 부딪혔는지 판단할 때도 씁니다 */
 function dripperOuterRadiusAt(height) {
   if (height > CONE_HEIGHT + DRIPPER_RIM_RISE || height < DRIPPER_BASE_BOTTOM_Y) {
     return 0;
@@ -710,15 +711,21 @@ function createDripperHandleGeometry() {
   return geometry;
 }
 
-const ceramicMaterial = new THREE.MeshPhysicalMaterial({
-  color: COLORS.dripperCeramic,
-  roughness: 0.32,
-  clearcoat: 0.6,
-  clearcoatRoughness: 0.18,
-  side: THREE.DoubleSide
+/* 투명 드리퍼: 유리 서버와 같은 방식(반투명 + 표면 반사)으로 그립니다.
+   빛을 굴절시키는 투과 재질로 만들면 그 뒤에 있는 물줄기와 유리 서버가 보이지 않게 되어 쓰지 않습니다 */
+const clearDripperMaterial = new THREE.MeshPhysicalMaterial({
+  color: COLORS.clearDripper,
+  transparent: true,
+  opacity: 0.3,
+  roughness: 0.04,
+  clearcoat: 1,
+  clearcoatRoughness: 0.03,
+  envMapIntensity: 1.5,
+  side: THREE.DoubleSide,
+  depthWrite: false
 });
-dripperGroup.add(new THREE.Mesh(createDripperLatheGeometry(), ceramicMaterial));
-const dripperHandle = new THREE.Mesh(createDripperHandleGeometry(), ceramicMaterial);
+dripperGroup.add(new THREE.Mesh(createDripperLatheGeometry(), clearDripperMaterial));
+const dripperHandle = new THREE.Mesh(createDripperHandleGeometry(), clearDripperMaterial);
 dripperHandle.rotation.y = DRIPPER_HANDLE_ANGLE_RADIANS;
 dripperGroup.add(dripperHandle);
 
